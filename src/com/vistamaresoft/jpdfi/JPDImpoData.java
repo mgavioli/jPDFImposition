@@ -107,7 +107,7 @@ public class JPDImpoData
 					((currPageNo+1) / 2) & 0x0001
 					// several sheets x sign. (booklet):
 					//	dest. page first increases then decreases
-					: Math.min (currPageNo, pagesPerSign - currPageNo);
+					: Math.min (currPageNo, pagesPerSign-1 - currPageNo);
 
 			// DESTINATION ROW
 			pageImpoData[currPageNo].row = format == Format.booklet ?
@@ -155,5 +155,48 @@ public class JPDImpoData
 		if (srcPageNo < 0 || srcPageNo > pageImpoData.length-1)
 			srcPageNo = 0;
 		return pageImpoData[srcPageNo].rotation;
+	}
+
+	/******************
+		STATIC - Convert between numeric and textual representations of formats
+	*******************/
+
+	public static String formatValToString(Format format)
+	{
+		switch (format)
+		{
+		case in4h:
+			return "in4h";
+		case in4v:
+			return "in4v";
+		case in8h:
+			return "in8h";
+		case in8v:
+			return "in8v";
+		case in16h:
+			return "in16h";
+		case in16v:
+			return "in16v";
+		default:				// any other supported format has 2 columns 
+			return "booklet";
+		}
+	}
+
+	public static Format formatStringToVal(String format)
+	{
+		format = format.toLowerCase();
+		if (format == "in4h")
+			return Format.in4h;
+		else if (format == "in4v")
+			return Format.in4v;
+		else if (format == "in8h")
+			return Format.in8h;
+		else if (format == "in8v")
+			return Format.in8v;
+		else if (format == "in16h")
+			return Format.in16h;
+		else if (format == "in16v")
+			return Format.in16v;
+		return Format.booklet;
 	}
 }

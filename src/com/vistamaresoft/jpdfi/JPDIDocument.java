@@ -10,14 +10,20 @@ package com.vistamaresoft.jpdfi;
 //import com.vistamaresoft.jpdfi.JPDImposition;
 
 import java.io.IOException;
+import java.util.HashMap;
+//import java.util.Iterator;
+
 
 import de.intarsys.pdf.cds.CDSRectangle;
 import de.intarsys.pdf.content.CSContent;
 import de.intarsys.pdf.content.common.CSCreator;
+import de.intarsys.pdf.cos.COSName;
 //import de.intarsys.pdf.cos.COSDocument;
 import de.intarsys.pdf.cos.COSObject;
+import de.intarsys.pdf.cos.COSStream;
 import de.intarsys.pdf.parser.COSLoadException;
 import de.intarsys.pdf.pd.PDDocument;
+//import de.intarsys.pdf.pd.PDForm;
 import de.intarsys.pdf.pd.PDPage;
 //import de.intarsys.pdf.pd.PDPageNode;
 import de.intarsys.pdf.pd.PDPageTree;
@@ -44,25 +50,12 @@ public class JPDIDocument extends Object
 		dstDoc = PDDocument.createNew();
 	}
 
-	public JPDIDocument(PDDocument sourceDoc)
+	public JPDIDocument(String filename)
 	{
-		srcDoc = sourceDoc;
-		dstDoc = PDDocument.createNew();
-	}
-
-	public JPDIDocument(String filename) throws IOException, COSLoadException
-	{
-		FileLocator	locator	= new FileLocator(filename);
-		srcDoc = PDDocument.createFromLocator(locator);
+		setSourceFileName(filename);
 		dstDoc = PDDocument.createNew();
 		impo = new JPDImposition();
 	}
-
-	/******************
-		Getters / Setters
-	*******************/
-
-	public void	setSourceDoc(PDDocument doc)	{ srcDoc = doc;	}
 
 	/******************
 		Apply the imposition
@@ -73,16 +66,8 @@ public class JPDIDocument extends Object
 	{
 		if (srcDoc == null)
 			return false;
-		return impose(srcDoc.getPageTree());
-	}
+		PDPageTree	pageTree = srcDoc.getPageTree();
 
-	/******************
-		Recursively apply the imposition
-	*******************
-	Fills the document with data from sourceDoc according to impo. */
-
-	protected boolean impose(PDPageTree pageTree)
-	{
 		// compute some helper values
 		int		pagesPerSheet	= impo.numOfCols() * impo.numOfRows() * 2;
 		int		numOfSrcPages	= pageTree.getCount();
@@ -99,13 +84,16 @@ public class JPDIDocument extends Object
 		JPDImpoData	impoData	= new JPDImpoData(impo.format(), maxSheetsPerSign);
 		PDPage		currSrcPage	= pageTree.getFirstPage();
 		int			currSign	= 0;
+		HashMap		resMap		= new HashMap();
 		while (currSrcPage != null)
 		{
 			int		numOfDestPages = sheetsPerSign[currSign]*2;
 			// get destination crop box from source page crop box
-			CDSRectangle box = currSrcPage.getMediaBox().copy().normalize();
-			box.setHeight(box.getHeight() * impo.numOfRows());
-			box.setWidth(box.getWidth() * impo.numOfCols());
+			CDSRectangle box	= currSrcPage.getMediaBox().copy().normalize();
+			float srcPageHeight	= box.getHeight();
+			float srcPageWidth	= box.getWidth();
+			box.setHeight(srcPageHeight * impo.numOfRows());
+			box.setWidth (srcPageWidth  * impo.numOfCols());
 			// create new, empty, destination pages
 			PDPage		destPage[]		= new PDPage[numOfDestPages];
 			CSContent	destContent[]	= new CSContent[numOfDestPages];
@@ -124,14 +112,14 @@ public class JPDIDocument extends Object
 			{
 				int destPageNo = impoData.pageDestPage(currSignPageNo);
 				// set page transformation into destination place
-				destCreator[destPageNo].saveState();
 				double	rot		= impoData.pageDestRotation(currSignPageNo); 
 				double	cosRot	= Math.cos(rot);
 				double	sinRot	= Math.sin(rot);
-				double	offsetX	= 72 * impoData.pageDestCol(currSignPageNo);
-				double	offsetY	= 72 * impoData.pageDestRow(currSignPageNo);
+				double	offsetX	= srcPageWidth * impoData.pageDestCol(currSignPageNo);
+				double	offsetY	= srcPageHeight * impoData.pageDestRow(currSignPageNo);
 				double	scaleX	= 1.0;
 				double	scaleY	= 1.0;
+				destCreator[destPageNo].saveState();
 				destCreator[destPageNo].transform(
 					(float)(scaleX*cosRot), (float)(scaleX*sinRot),
 					-(float)(scaleY*sinRot), (float)(scaleY*cosRot),
@@ -139,12 +127,26 @@ public class JPDIDocument extends Object
 				// copy source page contents and resources
 				destCreator[destPageNo].copy(currSrcPage.getContentStream());
 				if (currSrcPage.getResources() != null) {
-					COSObject cosRes	= currSrcPage.getResources().cosGetObject().copyDeep();
-					PDResources pdRes	= (PDResources)PDResources.META.createFromCos(cosRes);
+/* An unfinished attempt
+					COSObject	cosRes	= currSrcPage.getResources().cosGetObject();
+					PDResources	pdRes	= (PDResources)PDResources.META.createNew();
+					Iterator	iter	= cosRes.iterator();
+					while(iter.hasNext())
+					{
+						Object		key	= iter.next();
+						COSObject	res	= (COSObject)resMap.get(key);
+						COSObject	resCopy	= res.copyDeep(resMap);
+					}
+*/
+					COSObject	cosRes	= currSrcPage.getResources().cosGetObject().copyDeep(resMap);
+					PDResources	pdRes	= (PDResources)PDResources.META.createFromCos(cosRes);
 					destPage[destPageNo].setResources(pdRes);
 				}
-				// OR
-//				destCreator[destPageNo].doXObject(null, currSrcPage);
+				// OR (this does not seem to copy anything to destination pages!!)
+/*
+				PDForm form = createForm(currSrcPage);
+				destCreator[destPageNo].doXObject(null, form);
+*/
 				destCreator[destPageNo].restoreState();
 				currSrcPage = currSrcPage.getNextPage();
 			}
@@ -152,7 +154,9 @@ public class JPDIDocument extends Object
 			for (int destPageNo = 0; destPageNo < sheetsPerSign[currSign]*2; destPageNo++)
 			{
 				destCreator[destPageNo].close();
-				destPage[destPageNo].cosAddContents(destContent[destPageNo].createStream());
+				COSStream pageStream = destContent[destPageNo].createStream();
+				pageStream.addFilter(COSName.constant("FlateDecode"));
+				destPage[destPageNo].cosAddContents(pageStream);
 				dstDoc.addPageNode(destPage[destPageNo]);
 				destCreator[destPageNo] = null;		// a bit of paranoia!
 				destContent[destPageNo] = null;
@@ -180,4 +184,59 @@ public class JPDIDocument extends Object
 		}
 		return true;
 	}
+
+	/******************
+		Setters
+	*******************/
+
+	public void	setSourceDoc(PDDocument doc)	{ srcDoc = doc;	}
+
+	public void setSourceFileName(String filename) /*throws IOException, COSLoadException*/
+	{
+		if (srcDoc == null)
+		{
+			try {
+				srcDoc.close();
+				srcDoc = null;
+			}
+			catch (IOException e) {
+				System.err.println("Error closing document from file : " + srcDoc.getLocator().getFullName());
+				System.exit(1);
+			}
+		}
+		FileLocator	locator	= new FileLocator(filename);
+		try {
+			srcDoc = PDDocument.createFromLocator(locator);
+		}
+		catch (IOException e) {
+			System.err.println("Error opening file : " + filename);
+			System.exit(1);
+		}
+		catch (COSLoadException e) {
+				System.err.println("Error parsing file : " + filename);
+				System.exit(1);
+		}
+	}
+
+	public void setFormat(String format)
+	{
+		impo.setFormat(format);
+	}
+	/******************
+		Create a PDForm out of a PDPage
+	*******************/
+/*
+	protected PDForm createForm(PDPage page) {
+		PDForm form = (PDForm) PDForm.META.createNew();
+		if (page.getResources() != null) {
+			COSObject cosRes	= page.getResources().cosGetObject().copyDeep();
+			PDResources pdRes	= (PDResources) PDResources.META.createFromCos(cosRes);
+			form.setResources(pdRes);
+		}
+		CSContent content = page.getContentStream();
+		form.setBytes(content.toByteArray());
+		form.setBoundingBox(page.getCropBox().copy());
+		return form;
+	}
+*/
 }
