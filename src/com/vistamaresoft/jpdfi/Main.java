@@ -26,16 +26,17 @@ public class Main
 
 	public static void main(String[] args) throws Exception
 	{
-		if (args.length < 2)
-		{
+		boolean parsed = parseCL(args);
+		if (!wrongOption.isEmpty())
+			System.err.println("Unknown option '"+wrongOption + ".\n");
+		if (!wrongOption.isEmpty() || !parsed)
 			usage();
-			return;
-		}
 
 		JPDIDocument	outDoc	= new JPDIDocument(params[0]);
 		String format = options.get("f");
 		if (format != null)
-			outDoc.setFormat(format);
+			outDoc.setFormat(format, options.get("s"));
+		System.out.println(params[0] + " => " + params[1] + "\n");
 		if (outDoc.impose())
 			outDoc.save(params[1]);
 	}
@@ -52,7 +53,7 @@ public class Main
 
 		for (String arg : args)
 		{
-			if (arg.charAt(0) != '-' && arg.charAt(0) != '/')
+			if (arg.charAt(0) != '-')
 			{
 				// real parameters (rather than an option value string)
 				if (!isOption)
@@ -69,7 +70,10 @@ public class Main
 					}
 				}
 				else
+				{
 					options.put(Character.toString(lastOption), arg);
+					isOption = false;
+				}
 			}
 			else
 			{

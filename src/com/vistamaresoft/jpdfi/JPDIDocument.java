@@ -81,7 +81,7 @@ public class JPDIDocument extends Object
 		for (int i = 0; i < numOfSigns; i++)
 			sheetsPerSign[i] = maxSheetsPerSign - (missingSheetsInLastSign > i ? 1 : 0);
 
-		JPDImpoData	impoData	= new JPDImpoData(impo.format(), maxSheetsPerSign);
+//		JPDImpoData	impoData	= new JPDImpoData(impo.format(), maxSheetsPerSign);
 		PDPage		currSrcPage	= pageTree.getFirstPage();
 		int			currSign	= 0;
 		HashMap		resMap		= new HashMap();
@@ -107,16 +107,17 @@ public class JPDIDocument extends Object
 			}
 			// insert source pages, each at its proper destination
 			for (int currSignPageNo = 0;
-				currSrcPage != null && currSignPageNo < sheetsPerSign[currSign]*pagesPerSheet*2;
+				currSrcPage != null && currSignPageNo < sheetsPerSign[currSign]*pagesPerSheet;
 					currSignPageNo++)
 			{
-				int destPageNo = impoData.pageDestPage(currSignPageNo);
+				int destPageNo = impo.pageDestPage(currSignPageNo);
 				// set page transformation into destination place
-				double	rot		= impoData.pageDestRotation(currSignPageNo); 
+				double	rot		= impo.pageDestRotation(currSignPageNo) * Math.PI / 180.0;
 				double	cosRot	= Math.cos(rot);
 				double	sinRot	= Math.sin(rot);
-				double	offsetX	= srcPageWidth * impoData.pageDestCol(currSignPageNo);
-				double	offsetY	= srcPageHeight * impoData.pageDestRow(currSignPageNo);
+				// if page is upside down, add an extra col and row of offset, to compensate the rotation around the bottom left corner
+				double	offsetX	= srcPageWidth  * impo.pageDestCol(currSignPageNo) + (rot > 0 ? srcPageWidth  : 0.0);
+				double	offsetY	= srcPageHeight * impo.pageDestRow(currSignPageNo) + (rot > 0 ? srcPageHeight : 0.0);
 				double	scaleX	= 1.0;
 				double	scaleY	= 1.0;
 				destCreator[destPageNo].saveState();
@@ -186,6 +187,12 @@ public class JPDIDocument extends Object
 	}
 
 	/******************
+		Getters
+	*******************/
+
+	public JPDImposition.Format	format()	{ return impo.format();	}
+
+	/******************
 		Setters
 	*******************/
 
@@ -193,7 +200,7 @@ public class JPDIDocument extends Object
 
 	public void setSourceFileName(String filename) /*throws IOException, COSLoadException*/
 	{
-		if (srcDoc == null)
+		if (srcDoc != null)
 		{
 			try {
 				srcDoc.close();
@@ -218,10 +225,16 @@ public class JPDIDocument extends Object
 		}
 	}
 
-	public void setFormat(String format)
+	public void setFormat(String format, String sheetsPerSign)
 	{
-		impo.setFormat(format);
+		impo.setFormat(format, sheetsPerSign);
 	}
+/*
+	public void setMaxSheetsPerSignature(int val)
+	{
+		impo.setMaxSheetsPerSignature(val);
+	}
+*/
 	/******************
 		Create a PDForm out of a PDPage
 	*******************/
