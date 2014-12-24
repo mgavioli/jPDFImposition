@@ -171,7 +171,9 @@ public class JPDImposition
 		// initialize pageImpoData for each signature according to format
 		pageImpoData = new JPDIPageImpoData[numOfSigns][pagesPerSign];
 		for (int currSignNo = 0; currSignNo < numOfSigns; currSignNo++)
-			for (int currPageNo = 0; currPageNo < pageImpoData[currSignNo].length; currPageNo++)
+		{
+			int	numOfSrcPages	= numOfSourcePagesPerSignature(currSignNo);
+			for (int currPageNo = 0; currPageNo < numOfSrcPages; currPageNo++)
 			{
 				pageImpoData[currSignNo][currPageNo] = new JPDIPageImpoData();
 				// DESTINATION PAGE
@@ -181,7 +183,7 @@ public class JPDImposition
 						((currPageNo+1) / 2) & 0x0001
 						// several sheets x sign. (booklet):
 						//	dest. page first increases then decreases
-						: Math.min (currPageNo, pagesPerSign-1 - currPageNo);
+						: Math.min (currPageNo, numOfSrcPages-1 - currPageNo);
 	
 				// DESTINATION ROW
 				pageImpoData[currSignNo][currPageNo].row = (format == Format.booklet) ?
@@ -201,6 +203,7 @@ public class JPDImposition
 						// single sheets per sign.: use pre-built data
 						: prebuiltColData[format.code()][currPageNo];
 			}
+		}
 	}
 
 	public int	numOfSourcePagesPerSignature(int signNo)
