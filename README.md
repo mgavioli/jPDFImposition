@@ -19,8 +19,8 @@ To compile the package:
 
 1. Download the jPOD library.
 2. Expand it anywhere in your disk.
-3. Within your IDE of choice, add to your project each `.java` file in the `src/` folder.
-3. Add each of the `.jar` files in the jPOD `lib/` folder to your project build path.
+3. Within your IDE of choice, add to your project each `.java` file in the jPDFImposition `src/` folder.
+3. Add to your project build path at least `isrt.jar` and `jPod.jar` in the jPOD `lib/` folder.
 4. Compile...
 
 #### Disclaimer

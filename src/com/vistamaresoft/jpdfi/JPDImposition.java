@@ -39,9 +39,9 @@ public class JPDImposition
 		int	rotation;		// with which rotation (in degrees)
 	}
 
-	// built-in arrays defining the destination row and column for each of the source pages
+	// pre-built arrays defining the destination row and column for each of the source pages
 	// making up a signature in non-booklet formats (data for booklets are easier to compute)
-	private static final int[][] builtinRowData =
+	private static final int[][] prebuiltRowData =
 {
 	{ 0, 0, 1, 1, 1, 1, 0, 0, },	// in 4° h.
 	{ 0, 0, 0, 0, 1, 1, 1, 1, },	// in 4° v.
@@ -50,7 +50,7 @@ public class JPDImposition
 	{ 0, 0, 3, 3, 3, 3, 0, 0, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 0, 0, 3, 3, 3, 3, 0, 0},	// in 16° h.
 	{ 0, 0, 0, 0, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1},	// in 16° v.
 };
-	private static final int[][] builtinColData =
+	private static final int[][] prebuiltColData =
 {
 	{ 1, 0, 0, 1, 0, 1, 1, 0, },	// in 4° h.
 	{ 1, 0, 1, 0, 0, 1, 0, 1, },	// in 4° v.
@@ -61,8 +61,11 @@ public class JPDImposition
 };
 
 	private Format				format				= Format.booklet;
-	private int					maxSheetsPerSign	= 5;
-	private JPDIPageImpoData	pageImpoData[];
+	private int					maxSheetsPerSign	= 5;	// max num. of sheets per signature
+	// for each source page of each signature, define where and how to place it into the destination
+	private JPDIPageImpoData	pageImpoData[][];
+	private int					totPages			= 1;	// total num. of pages in document
+	private int					sheetsPerSign[];			// how many sheets each signature has
 
 	/******************
 		Default C'tor
@@ -115,13 +118,18 @@ public class JPDImposition
 			format = Format.booklet;
 	}
 */
-	public void setFormat(Format formalVal, int maxSheetsPerSignVal)
+	public void setFormat(Format formalVal, int maxSheetsPerSignVal, int numOfPages)
 	{
-		format = formalVal;
-		maxSheetsPerSign = (format == Format.booklet) ? maxSheetsPerSignVal : 1;
+		format				= formalVal;
+		maxSheetsPerSign	= maxSheetsPerSignVal;
+		totPages			= numOfPages;
+		if (format != Format.booklet)
+			maxSheetsPerSign = 1;
+		if (maxSheetsPerSign < 1)
+			maxSheetsPerSign = 1;
 		applyFormat();
 	}
-
+/*
 	public void setFormat(String formatStr, String maxSheetsPerSignStr)
 	{
 		Format formatVal = formatStringToVal(formatStr);
@@ -139,97 +147,113 @@ public class JPDImposition
 			setFormat(formatVal, maxSheetsPerSignVal);
 		}
 	}
-
+*/
 	private void applyFormat()
 	{
 		int		numOfCols, numOfRows;
 		
 		// set number of rows and columns according to format
-		switch (format)
-		{
-		case in4h:
-		case in4v:
-			numOfRows = numOfCols = 2;
-			break;
-		case in8h:
-		case in8v:
-			numOfRows = 2;
-			numOfCols = 4;
-			break;
-		case in16h:
-		case in16v:
-			numOfRows = numOfCols = 4;
-			break;
-		default:				// any other format defaults to booklet format
-			format = Format.booklet;
-			numOfRows = 1;
-			numOfCols = 2;
-			if (maxSheetsPerSign < 1)	maxSheetsPerSign = 1;
-		}
-		if (numOfRows != 1 || numOfCols != 2)
-			maxSheetsPerSign = 1;
-		int pagesPerSign = maxSheetsPerSign * numOfRows * numOfCols * 2;
+		numOfCols = numOfCols();
+		numOfRows = numOfRows();
 
-		// initialize pageImpoData according to format
-		pageImpoData = new JPDIPageImpoData[pagesPerSign];
-		for (int currPageNo = 0; currPageNo < pageImpoData.length; currPageNo++)
-		{
-			pageImpoData[currPageNo] = new JPDIPageImpoData();
-			// DESTINATION PAGE
-			pageImpoData[currPageNo].destPage = maxSheetsPerSign == 1 ?
-					// if 1 sheet x sign. (any non-booklet or in-folio booklet):
-					//	dest. page either 0 or 1, according to pagenum / 2 is even or odd
-					((currPageNo+1) / 2) & 0x0001
-					// several sheets x sign. (booklet):
-					//	dest. page first increases then decreases
-					: Math.min (currPageNo, pagesPerSign-1 - currPageNo);
+		// compute some helper values
+		int		pagesPerSheet	= numOfCols * numOfRows * 2;
+		int		numOfSheets		= (totPages + pagesPerSheet-1) / pagesPerSheet;
+		int		numOfSigns		= (numOfSheets + maxSheetsPerSign-1) / maxSheetsPerSign;
+		int		actMaxShPerSign	= Math.min(numOfSheets, maxSheetsPerSign);
+		int		pagesPerSign	= actMaxShPerSign * numOfRows * numOfCols * 2;
+		// determine the number of sheets for each signature
+		int		missingSheetsInLastSign	= (actMaxShPerSign - (numOfSheets % actMaxShPerSign)) % actMaxShPerSign;
+		sheetsPerSign	= new int[numOfSigns];
+		for (int i = 0; i < numOfSigns; i++)
+			sheetsPerSign[i] = actMaxShPerSign - (missingSheetsInLastSign > i ? 1 : 0);
 
-			// DESTINATION ROW
-			pageImpoData[currPageNo].row = format == Format.booklet ?
-					// if 1 row x sheet: row always = 0
-					0
-					// several rows per sheet:
-					: builtinRowData[format.code()][currPageNo];
+		// initialize pageImpoData for each signature according to format
+		pageImpoData = new JPDIPageImpoData[numOfSigns][pagesPerSign];
+		for (int currSignNo = 0; currSignNo < numOfSigns; currSignNo++)
+			for (int currPageNo = 0; currPageNo < pageImpoData[currSignNo].length; currPageNo++)
+			{
+				pageImpoData[currSignNo][currPageNo] = new JPDIPageImpoData();
+				// DESTINATION PAGE
+				pageImpoData[currSignNo][currPageNo].destPage = (sheetsPerSign[currSignNo] == 1) ?
+						// if 1 sheet x sign. (any non-booklet or in-folio booklet):
+						//	dest. page either 0 or 1, according to pagenum / 2 is even or odd
+						((currPageNo+1) / 2) & 0x0001
+						// several sheets x sign. (booklet):
+						//	dest. page first increases then decreases
+						: Math.min (currPageNo, pagesPerSign-1 - currPageNo);
+	
+				// DESTINATION ROW
+				pageImpoData[currSignNo][currPageNo].row = (format == Format.booklet) ?
+						// if 1 row x sheet: row always = 0
+						0
+						// several rows per sheet: use pre-built data
+						: prebuiltRowData[format.code()][currPageNo];
+	
+				// ROTATION: 0 for even rows, 180 for odd rows
+				pageImpoData[currSignNo][currPageNo].rotation =
+						(pageImpoData[currSignNo][currPageNo].row & 1) != 0 ? 180 : 0;
+	
+				// DESTINATION COLUMN
+				pageImpoData[currSignNo][currPageNo].col = (format == Format.booklet) ?
+						// column alternates 1 & 0
+						1 - (currPageNo & 1)
+						// single sheets per sign.: use pre-built data
+						: prebuiltColData[format.code()][currPageNo];
+			}
+	}
 
-			// ROTATION: 0 for even rows, 180 for odd rows
-			pageImpoData[currPageNo].rotation = (pageImpoData[currPageNo].row & 1) != 0 ? 180 : 0;
+	public int	numOfSourcePagesPerSignature(int signNo)
+	{
+		return sheetsPerSign[signNo] * numOfCols() * numOfRows() * 2;
+	}
 
-			// DESTINATION COLUMN
-			pageImpoData[currPageNo].col = format == Format.booklet ?
-					// column alternates 1 & 0
-					1 - (currPageNo & 1)
-					// single sheets per sign.:
-					: builtinColData[format.code()][currPageNo];
-		}
+	public int numOfDestPagesPerSignature(int signNo)
+	{
+		return sheetsPerSign[signNo] * 2;
 	}
 
 	/******************
 		Getters for individual page destination parameters
 	*******************/
 
-	public int pageDestPage(int srcPageNo)
+	public int pageDestPage(int srcPageNo, int signNo)
 	{
-		if (srcPageNo < 0 || srcPageNo > pageImpoData.length-1)
+		if (srcPageNo < 0 || srcPageNo > pageImpoData[signNo].length-1)
 			srcPageNo = 0;
-		return pageImpoData[srcPageNo].destPage;
+		return pageImpoData[signNo][srcPageNo].destPage;
 	}
-	public int pageDestRow(int srcPageNo)
+	public int pageDestRow(int srcPageNo, int signNo)
 	{
-		if (srcPageNo < 0 || srcPageNo > pageImpoData.length-1)
+		if (srcPageNo < 0 || srcPageNo > pageImpoData[signNo].length-1)
 			srcPageNo = 0;
-		return pageImpoData[srcPageNo].row;
+		return pageImpoData[signNo][srcPageNo].row;
 	}
-	public int pageDestCol(int srcPageNo)
+	public int pageDestCol(int srcPageNo, int signNo)
 	{
-		if (srcPageNo < 0 || srcPageNo > pageImpoData.length-1)
+		if (srcPageNo < 0 || srcPageNo > pageImpoData[signNo].length-1)
 			srcPageNo = 0;
-		return pageImpoData[srcPageNo].col;
+		return pageImpoData[signNo][srcPageNo].col;
 	}
-	public int pageDestRotation(int srcPageNo)
+	public double pageDestOffsetX(int srcPageNo, int signNo, double srcPageWidth)
 	{
-		if (srcPageNo < 0 || srcPageNo > pageImpoData.length-1)
+		if (srcPageNo < 0 || srcPageNo > pageImpoData[signNo].length-1)
 			srcPageNo = 0;
-		return pageImpoData[srcPageNo].rotation;
+		return srcPageWidth * pageImpoData[signNo][srcPageNo].col
+				+ (pageImpoData[signNo][srcPageNo].rotation > 0 ? srcPageWidth : 0.0);
+	}
+	public double pageDestOffsetY(int srcPageNo, int signNo, double srcPageHeight)
+	{
+		if (srcPageNo < 0 || srcPageNo > pageImpoData[signNo].length-1)
+			srcPageNo = 0;
+		return srcPageHeight * pageImpoData[signNo][srcPageNo].row
+				+ (pageImpoData[signNo][srcPageNo].rotation > 0 ? srcPageHeight : 0.0);
+	}
+	public int pageDestRotation(int srcPageNo, int signNo)
+	{
+		if (srcPageNo < 0 || srcPageNo > pageImpoData[signNo].length-1)
+			srcPageNo = 0;
+		return pageImpoData[signNo][srcPageNo].rotation;
 	}
 
 	/******************

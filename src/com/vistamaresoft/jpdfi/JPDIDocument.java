@@ -7,18 +7,23 @@
 *****************************/
 
 package com.vistamaresoft.jpdfi;
-//import com.vistamaresoft.jpdfi.JPDImposition;
 
 import java.io.IOException;
 import java.util.HashMap;
-//import java.util.Iterator;
-
+import java.util.Iterator;
 
 import de.intarsys.pdf.cds.CDSRectangle;
 import de.intarsys.pdf.content.CSContent;
 import de.intarsys.pdf.content.common.CSCreator;
-import de.intarsys.pdf.cos.COSName;
+import de.intarsys.pdf.cos.COSArray;
+import de.intarsys.pdf.cos.COSCatalog;
+import de.intarsys.pdf.cos.COSCompositeObject;
+import de.intarsys.pdf.cos.COSDocument;
+import de.intarsys.pdf.cos.COSDocumentElement;
+import de.intarsys.pdf.cos.COSDictionary;
 //import de.intarsys.pdf.cos.COSDocument;
+import de.intarsys.pdf.cos.COSName;
+import de.intarsys.pdf.cos.COSNull;
 import de.intarsys.pdf.cos.COSObject;
 import de.intarsys.pdf.cos.COSStream;
 import de.intarsys.pdf.parser.COSLoadException;
@@ -28,6 +33,7 @@ import de.intarsys.pdf.pd.PDPage;
 //import de.intarsys.pdf.pd.PDPageNode;
 import de.intarsys.pdf.pd.PDPageTree;
 import de.intarsys.pdf.pd.PDResources;
+import de.intarsys.pdf.st.STDocType;
 import de.intarsys.tools.locator.FileLocator;
 
 /******************
@@ -36,9 +42,11 @@ import de.intarsys.tools.locator.FileLocator;
 
 public class JPDIDocument extends Object
 {
-	private JPDImposition	impo;
-	private PDDocument		srcDoc;
-	private PDDocument		dstDoc;
+	private JPDImposition			impo;
+	private PDDocument				srcDoc;
+	private PDDocument				dstDoc;
+	private JPDImposition.Format	format;
+	private int						maxSheetsPerSign;
 
 	/******************
 		C'tors
@@ -46,15 +54,22 @@ public class JPDIDocument extends Object
 
 	public JPDIDocument()
 	{
-		srcDoc = null;
-		dstDoc = PDDocument.createNew();
+		srcDoc				= null;
+		init();
 	}
 
 	public JPDIDocument(String filename)
 	{
 		setSourceFileName(filename);
-		dstDoc = PDDocument.createNew();
-		impo = new JPDImposition();
+		init();
+	}
+
+	private void init()
+	{
+		dstDoc				= null;
+		impo				= new JPDImposition();
+		format				= impo.format();
+		maxSheetsPerSign	= impo.maxSheetsPerSignature();
 	}
 
 	/******************
@@ -66,58 +81,57 @@ public class JPDIDocument extends Object
 	{
 		if (srcDoc == null)
 			return false;
-		PDPageTree	pageTree = srcDoc.getPageTree();
-
-		// compute some helper values
-		int		pagesPerSheet	= impo.numOfCols() * impo.numOfRows() * 2;
-		int		numOfSrcPages	= pageTree.getCount();
-		int		numOfSheets		= (numOfSrcPages + pagesPerSheet-1) / pagesPerSheet;
-		int		numOfSigns		= (numOfSheets + impo.maxSheetsPerSignature()-1)
-				/ impo.maxSheetsPerSignature();
-		int		maxSheetsPerSign= Math.min(numOfSheets, impo.maxSheetsPerSignature());
-		// determine the number of sheets for each signature
-		int		missingSheetsInLastSign	= (maxSheetsPerSign - (numOfSheets % maxSheetsPerSign)) % maxSheetsPerSign;
-		int[]	sheetsPerSign	= new int[numOfSigns];
-		for (int i = 0; i < numOfSigns; i++)
-			sheetsPerSign[i] = maxSheetsPerSign - (missingSheetsInLastSign > i ? 1 : 0);
-
-//		JPDImpoData	impoData	= new JPDImpoData(impo.format(), maxSheetsPerSign);
-		PDPage		currSrcPage	= pageTree.getFirstPage();
-		int			currSign	= 0;
-		HashMap		resMap		= new HashMap();
+		if (!createDestDocument())
+			return false;
+		PDPageTree	pageTree 	= srcDoc.getPageTree();
+		impo.setFormat(format, maxSheetsPerSign, pageTree.getCount());
+		HashMap	resMap		= new HashMap();
+		PDPage	currSrcPage	= pageTree.getFirstPage();
+		int		currSignNo	= 0;
+		// for each signature
 		while (currSrcPage != null)
 		{
-			int		numOfDestPages = sheetsPerSign[currSign]*2;
+			int		numOfDestPages = impo.numOfDestPagesPerSignature(currSignNo);
 			// get destination crop box from source page crop box
 			CDSRectangle box	= currSrcPage.getMediaBox().copy().normalize();
 			float srcPageHeight	= box.getHeight();
 			float srcPageWidth	= box.getWidth();
 			box.setHeight(srcPageHeight * impo.numOfRows());
 			box.setWidth (srcPageWidth  * impo.numOfCols());
-			// create new, empty, destination pages
-			PDPage		destPage[]		= new PDPage[numOfDestPages];
-			CSContent	destContent[]	= new CSContent[numOfDestPages];
-			CSCreator	destCreator[]	= new CSCreator[numOfDestPages];
-			for (int pageNo = 0; pageNo < sheetsPerSign[currSign]*2; pageNo++)
+
+			// create arrays to hold destination pages (and their appendages) for the whole signature
+			PDPage			destPage[]		= new PDPage[numOfDestPages];
+			CSContent		destContent[]	= new CSContent[numOfDestPages];
+			CSCreator		destCreator[]	= new CSCreator[numOfDestPages];
+			COSDictionary	destResDict[]	= new COSDictionary[numOfDestPages];
+
+			// instantiate new pages for the whole signature
+			for (int pageNo = 0; pageNo < numOfDestPages; pageNo++)
 			{
 				destPage[pageNo]	= (PDPage) PDPage.META.createNew();
 				destPage[pageNo].setMediaBox(box.copy());
 				destContent[pageNo]	= CSContent.createNew();
 				destCreator[pageNo]	= CSCreator.createFromContent(destContent[pageNo], currSrcPage);
+				destResDict[pageNo]	= PDResources.META.createNew().cosGetDict();
 			}
-			// insert source pages, each at its proper destination
+
+			// iterate on source pages of the whole signature,
+			// inserting each at its proper destination in dest. pages
+			int		numOfSourcePages = impo.numOfSourcePagesPerSignature(currSignNo);
 			for (int currSignPageNo = 0;
-				currSrcPage != null && currSignPageNo < sheetsPerSign[currSign]*pagesPerSheet;
+				currSrcPage != null && currSignPageNo < numOfSourcePages;
 					currSignPageNo++)
 			{
-				int destPageNo = impo.pageDestPage(currSignPageNo);
-				// set page transformation into destination place
-				double	rot		= impo.pageDestRotation(currSignPageNo) * Math.PI / 180.0;
+				int destPageNo = impo.pageDestPage(currSignPageNo, currSignNo);
+
+				// set PAGE TRANSFORMATION into destination place
+
+				double	rot		= impo.pageDestRotation(currSignPageNo, currSignNo) * Math.PI / 180.0;
 				double	cosRot	= Math.cos(rot);
 				double	sinRot	= Math.sin(rot);
 				// if page is upside down, add an extra col and row of offset, to compensate the rotation around the bottom left corner
-				double	offsetX	= srcPageWidth  * impo.pageDestCol(currSignPageNo) + (rot > 0 ? srcPageWidth  : 0.0);
-				double	offsetY	= srcPageHeight * impo.pageDestRow(currSignPageNo) + (rot > 0 ? srcPageHeight : 0.0);
+				double	offsetX	= impo.pageDestOffsetX(currSignPageNo, currSignNo, srcPageWidth);
+				double	offsetY	= impo.pageDestOffsetY(currSignPageNo, currSignNo, srcPageHeight);
 				double	scaleX	= 1.0;
 				double	scaleY	= 1.0;
 				destCreator[destPageNo].saveState();
@@ -125,45 +139,44 @@ public class JPDIDocument extends Object
 					(float)(scaleX*cosRot), (float)(scaleX*sinRot),
 					-(float)(scaleY*sinRot), (float)(scaleY*cosRot),
 					(float)offsetX, (float)offsetY);
-				// copy source page contents and resources
+				// copy source page contents
 				destCreator[destPageNo].copy(currSrcPage.getContentStream());
-				if (currSrcPage.getResources() != null) {
-/* An unfinished attempt
-					COSObject	cosRes	= currSrcPage.getResources().cosGetObject();
-					PDResources	pdRes	= (PDResources)PDResources.META.createNew();
-					Iterator	iter	= cosRes.iterator();
-					while(iter.hasNext())
-					{
-						Object		key	= iter.next();
-						COSObject	res	= (COSObject)resMap.get(key);
-						COSObject	resCopy	= res.copyDeep(resMap);
-					}
-*/
-					COSObject	cosRes	= currSrcPage.getResources().cosGetObject().copyDeep(resMap);
-					PDResources	pdRes	= (PDResources)PDResources.META.createFromCos(cosRes);
-					destPage[destPageNo].setResources(pdRes);
+
+				// COPY RESOURCES
+
+				if (currSrcPage.getResources() != null)
+				{
+					COSDictionary					resDict	= currSrcPage.getResources().cosGetDict();
+					mergeResources(resDict, destResDict[destPageNo]);
 				}
-				// OR (this does not seem to copy anything to destination pages!!)
-/*
+/*				// OR (this does not seem to copy anything to destination pages!!)
 				PDForm form = createForm(currSrcPage);
 				destCreator[destPageNo].doXObject(null, form);
 */
 				destCreator[destPageNo].restoreState();
 				currSrcPage = currSrcPage.getNextPage();
 			}
-			// add dest. pages to dest. document
-			for (int destPageNo = 0; destPageNo < sheetsPerSign[currSign]*2; destPageNo++)
+
+			// signature is complete: add dest. pages to dest. document
+			for (int destPageNo = 0; destPageNo < numOfDestPages; destPageNo++)
 			{
 				destCreator[destPageNo].close();
+				// add content to dest. page
 				COSStream pageStream = destContent[destPageNo].createStream();
 				pageStream.addFilter(COSName.constant("FlateDecode"));
 				destPage[destPageNo].cosAddContents(pageStream);
+				// make a copy of cumulated page resources not yet copied and add to dest. page
+				COSObject	cosRes		= destResDict[destPageNo].copyDeep(resMap);
+				PDResources destPageRes	= (PDResources) PDResources.META.createFromCos(cosRes);
+				destPage[destPageNo].setResources(destPageRes);
+				// add page to doc and release objects no longer needed
 				dstDoc.addPageNode(destPage[destPageNo]);
-				destCreator[destPageNo] = null;		// a bit of paranoia!
-				destContent[destPageNo] = null;
-				destPage[destPageNo] = null;
+				destCreator[destPageNo]	= null;		// a bit of paranoia!
+				destContent[destPageNo]	= null;
+				destPage[destPageNo]	= null;
+				destResDict[destPageNo]	= null;
 			}
-			currSign++;
+			currSignNo++;
 		}
 		return true;
 	}
@@ -225,16 +238,120 @@ public class JPDIDocument extends Object
 		}
 	}
 
-	public void setFormat(String format, String sheetsPerSign)
+	public void setFormat(String formatStr, String sheetsPerSignStr)
 	{
-		impo.setFormat(format, sheetsPerSign);
+		// normalize and save params for later
+		format	= JPDImposition.formatStringToVal(formatStr);
+		String maxSheetsPerSignStr = (sheetsPerSignStr != null) ? sheetsPerSignStr : formatStr;
+		try {
+			maxSheetsPerSign = Integer.parseInt(maxSheetsPerSignStr);
+		}
+		catch(NumberFormatException e) {
+			maxSheetsPerSign = 1;
+		}
+		if (maxSheetsPerSign < 1)
+			maxSheetsPerSign = 1;
 	}
-/*
-	public void setMaxSheetsPerSignature(int val)
+
+	/******************
+		Merge a source resource dictionary into a destination resource dictionary
+	*******************/
+
+	protected void mergeResources(COSDictionary sourceDict, COSDictionary dest)
 	{
-		impo.setMaxSheetsPerSignature(val);
+		Iterator<COSDictionary.Entry>	iter	= sourceDict.entryIterator();
+		// iterate on all the resource entries
+		while(iter.hasNext())
+		{
+			// retrieve entry name
+			COSDictionary.Entry	entry		= iter.next();
+			COSName				entryName	= (COSName)entry.getKey();
+			// if an entry with such a name already exists in the dest. dictionary
+			if (dest.containsKey(entryName))
+			{
+				// if "ProcSet", we are dealing with COSarray's:
+				// merge the source array into the dest. array
+				if (entryName.stringValue().equals("ProcSet"))
+				{
+					COSArray	entryArray		= (COSArray)entry.getValue();
+					COSArray	destEntryArr	= (COSArray)dest.get(entryName);
+					// iterate on source array elements
+					Iterator<COSDocumentElement>	iterName	= entryArray.basicIterator();
+					while (iterName.hasNext())
+					{
+						COSName	srcName	= (COSName)iterName.next();
+						boolean	found	= false;
+						// compare this source COSName with each dest. COSName
+						for (int i = 0; i < destEntryArr.size(); i++)
+						{
+							COSName destName = (COSName)destEntryArr.basicGet(i);
+							// if same name, mark as found and stop
+							if (srcName.stringValue().equals(destName.stringValue()) )
+							{
+								found = true;
+								break;
+							}
+						}
+						if (!found)				// if no such a name, add it to dest. array
+							destEntryArr.add(srcName);
+					}
+				}
+				// otherwise, we are dealing with COSDictionary'es:
+				// add to the dest. dictionary all the entries in source dictionary not already present
+				else
+				{
+					COSDictionary	entryDict		= (COSDictionary)entry.getValue();
+					COSDictionary	destEntryDict	= (COSDictionary)dest.get(entryName);
+					destEntryDict.addIfAbsent(entryDict);
+				}
+			}
+			// if no entry with such a name in dest. dictionary, add it as it is
+			else
+			{
+				COSObject	copy	= ((COSCompositeObject)entry.getValue()).copyShallow();
+				dest.basicPutSilent(entryName, copy);
+			}
+		}
 	}
-*/
+
+	/******************
+		Create destination document
+	*******************
+	Create a dest. document with the same type and version of the source document.
+
+	Only the "PDF" document type is supported; other types trigger application abort.
+	Only PDF versions up to "1.7" are supported; greater PDF versions are downgraded to 1.7 with a warning. */
+
+	protected boolean createDestDocument()
+	{
+//		dstDoc = PDDocument.createNew();
+
+		// retrieve and check source document type and version
+		STDocType docType = srcDoc.cosGetDoc().stGetDoc().getDocType();
+		if (!docType.getTypeName().equals("PDF"))
+		{
+			System.err.println("Unsupported document type: '"+ docType.getTypeName() + ".\n");
+			return false;
+		}
+		if (docType.getVersion().compareTo("1.7") > 0)
+		{
+			System.err.println("Unsupported PDF version: "+ docType.getVersion() + ";\nthe source document may contain unsupported features.\nUsing PDF Version 1.7 instead.\n");
+			docType.setVersion("1.7");
+		}
+		// create a dest. document of the same type and version of the source document
+		COSDocument	cosDstDoc	= COSDocument.createNew(docType);
+		COSObject	pageTree	= cosDstDoc.getCatalog().cosGetField(COSCatalog.DK_Pages);
+		if (pageTree == null || pageTree == COSNull.NULL)
+		{
+			PDPageTree newPageTree = (PDPageTree) PDPageTree.META.createNew();
+			cosDstDoc.getCatalog().cosSetField(COSCatalog.DK_Pages,
+					newPageTree.cosGetObject());
+		}
+		dstDoc					= PDDocument.createFromCos(cosDstDoc);
+
+		return true;
+	}
+
 	/******************
 		Create a PDForm out of a PDPage
 	*******************/

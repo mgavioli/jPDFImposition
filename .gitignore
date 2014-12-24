@@ -2,6 +2,7 @@
 build/
 bin/
 target/
+workfiles/
 
 # Temps and Backups #
 tmp/
