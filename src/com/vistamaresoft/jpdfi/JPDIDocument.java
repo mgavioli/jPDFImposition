@@ -293,7 +293,7 @@ public class JPDIDocument extends Object
 							}
 						}
 						if (!found)				// if no such a name, add it to dest. array
-							destEntryArr.add(srcName.copyShallow());
+							destEntryArr.basicAddSilent(srcName.copyShallow());
 					}
 				}
 				// otherwise, we are dealing with COSDictionary'es:
