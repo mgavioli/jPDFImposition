@@ -110,14 +110,7 @@ public class JPDImposition
 		}
 	}
 	public int maxSheetsPerSignature()				{ return maxSheetsPerSign;	}
-/*
-	public void setMaxSheetsPerSignature(int val)
-	{
-		maxSheetsPerSign = val;
-		if (maxSheetsPerSign != 1)
-			format = Format.booklet;
-	}
-*/
+
 	public void setFormat(Format formalVal, int maxSheetsPerSignVal, int numOfPages)
 	{
 		format				= formalVal;
@@ -129,25 +122,7 @@ public class JPDImposition
 			maxSheetsPerSign = 1;
 		applyFormat();
 	}
-/*
-	public void setFormat(String formatStr, String maxSheetsPerSignStr)
-	{
-		Format formatVal = formatStringToVal(formatStr);
-		// look for a max sheets per sign value in its specific option, if supplied
-		// or as a number in the format option
-		String maxSheetStr = (maxSheetsPerSignStr != null) ? maxSheetsPerSignStr : formatStr;
-		int maxSheetsPerSignVal = 1;
-		try {
-			maxSheetsPerSignVal = Integer.parseInt(maxSheetStr);
-		}
-		catch(NumberFormatException e) {
-			maxSheetsPerSignVal = 1;
-		}
-		finally {
-			setFormat(formatVal, maxSheetsPerSignVal);
-		}
-	}
-*/
+
 	private void applyFormat()
 	{
 		int		numOfCols, numOfRows;
@@ -155,18 +130,19 @@ public class JPDImposition
 		// set number of rows and columns according to format
 		numOfCols = numOfCols();
 		numOfRows = numOfRows();
-
 		// compute some helper values
 		int		pagesPerSheet	= numOfCols * numOfRows * 2;
 		int		numOfSheets		= (totPages + pagesPerSheet-1) / pagesPerSheet;
 		int		numOfSigns		= (numOfSheets + maxSheetsPerSign-1) / maxSheetsPerSign;
-		int		actMaxShPerSign	= Math.min(numOfSheets, maxSheetsPerSign);
-		int		pagesPerSign	= actMaxShPerSign * numOfRows * numOfCols * 2;
-		// determine the number of sheets for each signature
-		int		missingSheetsInLastSign	= (actMaxShPerSign - (numOfSheets % actMaxShPerSign)) % actMaxShPerSign;
+		int		minSheetsPerSign= numOfSheets / numOfSigns;	// at least as many sheets per signature
+		int		extraSheets		= numOfSheets - (numOfSigns * minSheetsPerSign);	// plus as many others
+		// determine the number of sheets for each signature, assigning to each signature
+		// at least minSheetsPerSign + 1 for the first extraSheets signatures
 		sheetsPerSign	= new int[numOfSigns];
 		for (int i = 0; i < numOfSigns; i++)
-			sheetsPerSign[i] = actMaxShPerSign - (missingSheetsInLastSign > i ? 1 : 0);
+			sheetsPerSign[i] = minSheetsPerSign + (i >= extraSheets ? 0 : 1);
+		// max number of pages per signature
+		int		pagesPerSign	= (minSheetsPerSign + (extraSheets > 0 ? 1 : 0)) * numOfRows * numOfCols * 2;
 
 		// initialize pageImpoData for each signature according to format
 		pageImpoData = new JPDIPageImpoData[numOfSigns][pagesPerSign];
