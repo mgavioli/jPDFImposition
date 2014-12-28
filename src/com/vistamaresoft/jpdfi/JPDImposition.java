@@ -14,6 +14,7 @@ package com.vistamaresoft.jpdfi;
 
 public class JPDImposition
 {
+public static final int	DEFAULT_SHEETS_PER_SIGN	= 5;
 public enum Format
 {
 	in4h	(0),	// in 4° format, first fold is horizontal
@@ -39,27 +40,27 @@ private class JPDIPageImpoData
 
 // pre-built arrays defining the destination row and column for each of the source pages
 // making up a signature in non-booklet formats (data for booklets are easier to compute)
-	private static final int[][] prebuiltRowData =
+private static final int[][] prebuiltRowData =
 {
 	{ 0, 0, 1, 1, 1, 1, 0, 0, },	// in 4° h.
-{ 0, 0, 0, 0, 1, 1, 1, 1, },	// in 4° v.
-{ 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0},	// in 8° h.
-{ 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0},	// in 8° v.
-{ 0, 0, 3, 3, 3, 3, 0, 0, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 0, 0, 3, 3, 3, 3, 0, 0},	// in 16° h.
-{ 0, 0, 0, 0, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1},	// in 16° v.
+	{ 0, 0, 0, 0, 1, 1, 1, 1, },	// in 4° v.
+	{ 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0},	// in 8° h.
+	{ 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0},	// in 8° v.
+	{ 0, 0, 3, 3, 3, 3, 0, 0, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 0, 0, 3, 3, 3, 3, 0, 0},	// in 16° h.
+	{ 0, 0, 0, 0, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1},	// in 16° v.
 };
-	private static final int[][] prebuiltColData =
+private static final int[][] prebuiltColData =
 {
 	{ 1, 0, 0, 1, 0, 1, 1, 0, },	// in 4° h.
-{ 1, 0, 1, 0, 0, 1, 0, 1, },	// in 4° v.
-{ 3, 0, 0, 3, 0, 3, 3, 0, 1, 2, 2, 1, 2, 1, 1, 2},	// in 8° h.
-{ 3, 0, 3, 0, 0, 3, 0, 3, 2, 1, 2, 1, 1, 2, 1, 2},	// in 8° v.
-{ 3, 0, 0, 3, 0, 3, 3, 0, 0, 3, 3, 0, 3, 0, 0, 3, 2, 1, 1, 2, 1, 2, 2, 1, 1, 2, 2, 1, 2, 1, 1, 2},	// in 16° h.
-{ 3, 0, 3, 0, 0, 3, 0, 3, 2, 1, 2, 1, 1, 2, 1, 2, 2, 1, 2, 1, 1, 2, 1, 2, 3, 0, 3, 0, 0, 3, 0, 3},	// in 16° v.
+	{ 1, 0, 1, 0, 0, 1, 0, 1, },	// in 4° v.
+	{ 3, 0, 0, 3, 0, 3, 3, 0, 1, 2, 2, 1, 2, 1, 1, 2},	// in 8° h.
+	{ 3, 0, 3, 0, 0, 3, 0, 3, 2, 1, 2, 1, 1, 2, 1, 2},	// in 8° v.
+	{ 3, 0, 0, 3, 0, 3, 3, 0, 0, 3, 3, 0, 3, 0, 0, 3, 2, 1, 1, 2, 1, 2, 2, 1, 1, 2, 2, 1, 2, 1, 1, 2},	// in 16° h.
+	{ 3, 0, 3, 0, 0, 3, 0, 3, 2, 1, 2, 1, 1, 2, 1, 2, 2, 1, 2, 1, 1, 2, 1, 2, 3, 0, 3, 0, 0, 3, 0, 3},	// in 16° v.
 };
 
-	private Format				format				= Format.booklet;
-	private int					maxSheetsPerSign	= 5;	// max num. of sheets per signature
+private Format				format				= Format.booklet;
+private int					maxSheetsPerSign	= DEFAULT_SHEETS_PER_SIGN;	// max num. of sheets per signature
 // for each source page of each signature, define where and how to place it into the destination
 private JPDIPageImpoData	pageImpoData[][];
 private int					totPages			= 1;	// total num. of pages in document
@@ -212,6 +213,8 @@ public int pageDestCol(int srcPageNo, int signNo)
 		srcPageNo = 0;
 	return pageImpoData[signNo][srcPageNo].col;
 }
+// Rotation: if page is upside down, add an extra col and row of offset,
+// to compensate the rotation around the bottom left corner
 public double pageDestOffsetX(int srcPageNo, int signNo, double srcPageWidth)
 {
 	if (srcPageNo < 0 || srcPageNo > pageImpoData[signNo].length-1)
@@ -253,7 +256,7 @@ public static String formatValToString(Format format)
 		return "in16h";
 	case in16v:
 		return "in16v";
-	default:				// any other supported format has 2 columns 
+	default:				// any other string defaults to "booklet"
 		return "booklet";
 	}
 }

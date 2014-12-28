@@ -28,25 +28,32 @@ public class Main
 	{
 		boolean parsed = parseCL(args);
 		if (!wrongOption.isEmpty())
-			System.err.println("Unknown option '"+wrongOption + ".\n");
+			System.err.println("Unknown option '" + wrongOption + ".\n");
 		if (!wrongOption.isEmpty() || !parsed)
 			usage();
 
-		JPDIDocument	outDoc	= new JPDIDocument(params[0]);
-		String format = options.get("f");
+		JPDIDocument	outDoc		= new JPDIDocument(params[0]);
+		String			paramList	= options.get("l");
+		String			format		= options.get("f");
 		if (format != null)
 			outDoc.setFormat(format, options.get("s"));
-		System.out.println(params[0] + " => " + params[1] + "\n");
+		if (params[1] != null)
+			outDoc.setOutputFileName(params[1]);
+		if (paramList != null)
+			if (!outDoc.readParamFile(paramList))
+				System.exit(1);
+		System.out.println(outDoc.getInputFileName() + " => " + outDoc.getOutputFileName() + "\n");
 		if (outDoc.impose())
-			outDoc.save(params[1]);
+			outDoc.save();
 	}
+
 	/******************
 		CLI
 	*******************/
 
-	public static boolean parseCL(String[] args)
+	protected static boolean parseCL(String[] args)
 	{
-		final String	acceptedOptions = "fs";
+		final String	acceptedOptions = "fls";
 		boolean			isOption	= false;				// true when expecting a string for an option
 		char			lastOption	= '\0';
 		options = new HashMap<String, String>();
@@ -100,6 +107,6 @@ public class Main
 
 	public static void usage()
 	{
-		System.out.println("usage: java[.exe] jPDFi [options] <input-pdf> <output-pdf>\nWhere options can be:\n-f format\the imposition format\n-s sheetsPerSignature\t the max no. of sheets a signature may have\\n");
+		System.out.println("usage: java[.exe] jPDFi [options] <input-pdf> <output-pdf>\nWhere options can be:\n-f format\the imposition format\n-s sheetsPerSignature\t the max no. of sheets a signature may have\n-l filename\t an XML parameter file with additional parameters\n\n");
 	}
 }

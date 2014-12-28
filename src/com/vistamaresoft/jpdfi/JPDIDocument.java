@@ -8,9 +8,17 @@
 
 package com.vistamaresoft.jpdfi;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Iterator;
+
+import javax.xml.stream.XMLInputFactory;
+import javax.xml.stream.XMLStreamConstants;
+import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.XMLStreamReader;
 
 import de.intarsys.pdf.cds.CDSRectangle;
 import de.intarsys.pdf.content.CSContent;
@@ -43,13 +51,20 @@ import de.intarsys.tools.locator.FileLocator;
 
 public class JPDIDocument extends Object
 {
-private JPDImposition			impo;
-private PDDocument				srcDoc;
-private PDDocument				dstDoc;
+private PDDocument				dstDoc, srcDoc;
 private JPDImposition.Format	format;
+private JPDImposition			impo;
+private String					inputFileName;
 private int						maxSheetsPerSign;
+private String					outputFileName;
+private double					pageOffsetX[]	= { 0.0, 0.0 };
+private double					pageOffsetY[]	= { 0.0, 0.0 };
 
-public static final boolean		useMerger = true;
+private static final int		FRONT_PAGE		= 0;
+private static final int		BACK_PAGE		= 1;
+private static final double		MM2PDF			= 72 / 25.4;
+
+public static final boolean		useMerger		= true;
 
 /******************
 	C'tors
@@ -63,7 +78,8 @@ public JPDIDocument()
 
 public JPDIDocument(String filename)
 {
-	setSourceFileName(filename);
+	if (filename != null)
+		setSourceFileName(filename);
 	init();
 }
 
@@ -73,6 +89,9 @@ private void init()
 	impo				= new JPDImposition();
 	format				= impo.format();
 	maxSheetsPerSign	= impo.maxSheetsPerSignature();
+	pageOffsetX[FRONT_PAGE]	= pageOffsetX[BACK_PAGE]
+			= pageOffsetY[FRONT_PAGE] = pageOffsetY[BACK_PAGE] = 0.0;
+	inputFileName		= outputFileName = null;
 }
 
 /******************
@@ -139,9 +158,10 @@ public boolean impose()
 			double	rot		= impo.pageDestRotation(currSignPageNo, currSignNo) * Math.PI / 180.0;
 			double	cosRot	= Math.cos(rot);
 			double	sinRot	= Math.sin(rot);
-			// if page is upside down, add an extra col and row of offset, to compensate the rotation around the bottom left corner
-			double	offsetX	= impo.pageDestOffsetX(currSignPageNo, currSignNo, srcPageWidth);
-			double	offsetY	= impo.pageDestOffsetY(currSignPageNo, currSignNo, srcPageHeight);
+			double	offsetX	= impo.pageDestOffsetX(currSignPageNo, currSignNo, srcPageWidth)
+					+ pageOffsetX[destPageNo & 1];
+			double	offsetY	= impo.pageDestOffsetY(currSignPageNo, currSignNo, srcPageHeight)
+					+ pageOffsetY[destPageNo & 1];
 			double	scaleX	= 1.0;
 			double	scaleY	= 1.0;
 			destCreator[destPageNo].saveState();
@@ -202,15 +222,20 @@ public boolean impose()
 	Save the destination document
 *******************/
 
-protected boolean save(String filename) /*throws IOException*/
+protected boolean save() /*throws IOException*/
 {
-	FileLocator locator = new FileLocator(filename);
+	if (outputFileName == null)
+	{
+		System.err.println("No output file specified.");
+		return false;
+	}
+	FileLocator locator = new FileLocator(outputFileName);
 	try {
 		dstDoc.save(locator, null);
 		dstDoc.close();
 	}
 	catch (IOException e) {
-		System.err.println("Caught IOException: " + e.getMessage());
+		System.err.println("Error while saving to " + outputFileName + ": " + e.getMessage());
 		return false;
 	}
 	return true;
@@ -220,16 +245,39 @@ protected boolean save(String filename) /*throws IOException*/
 	Getters
 *******************/
 
-public JPDImposition.Format	format()	{ return impo.format();	}
+public JPDImposition.Format	format()	{ return impo.format();		}
+
+public String getInputFileName()		{ return inputFileName;		}
+
+public String getOutputFileName()		{ return outputFileName;	}
 
 /******************
 	Setters
 *******************/
 
-public void	setSourceDoc(PDDocument doc)	{ srcDoc = doc;	}
+public void setFormat(String formatStr, String sheetsPerSignStr)
+{
+	// normalize and save params for later
+	format	= JPDImposition.formatStringToVal(formatStr);
+	String maxSheetsPerSignStr = (sheetsPerSignStr != null) ? sheetsPerSignStr : formatStr;
+	try {
+		maxSheetsPerSign = Integer.parseInt(maxSheetsPerSignStr);
+	}
+	catch(NumberFormatException e) {
+		maxSheetsPerSign = 1;
+	}
+	if (maxSheetsPerSign < 1)
+		maxSheetsPerSign = 1;
+}
+
+public void setOutputFileName(String outputFileName)	{ this.outputFileName = outputFileName;	}
+
+public void	setSourceDoc(PDDocument doc)				{ srcDoc = doc;	}
 
 public void setSourceFileName(String filename) /*throws IOException, COSLoadException*/
 {
+	inputFileName	= filename;
+
 	if (srcDoc != null)
 	{
 		try {
@@ -253,21 +301,6 @@ public void setSourceFileName(String filename) /*throws IOException, COSLoadExce
 			System.err.println("Error parsing file : " + filename);
 			System.exit(1);
 	}
-}
-
-public void setFormat(String formatStr, String sheetsPerSignStr)
-{
-	// normalize and save params for later
-	format	= JPDImposition.formatStringToVal(formatStr);
-	String maxSheetsPerSignStr = (sheetsPerSignStr != null) ? sheetsPerSignStr : formatStr;
-	try {
-		maxSheetsPerSign = Integer.parseInt(maxSheetsPerSignStr);
-	}
-	catch(NumberFormatException e) {
-		maxSheetsPerSign = 1;
-	}
-	if (maxSheetsPerSign < 1)
-		maxSheetsPerSign = 1;
 }
 
 /******************
@@ -348,12 +381,12 @@ protected boolean createDestDocument()
 	STDocType docType = srcDoc.cosGetDoc().stGetDoc().getDocType();
 	if (!docType.getTypeName().equals("PDF"))
 	{
-		System.err.println("Unsupported document type: '"+ docType.getTypeName() + ".\n");
+		System.err.println("Unsupported document type: '"+ docType.getTypeName());
 		return false;
 	}
 	if (docType.getVersion().compareTo("1.7") > 0)
 	{
-		System.err.println("Unsupported PDF version: "+ docType.getVersion() + ";\nthe source document may contain unsupported features.\nUsing PDF Version 1.7 instead.\n");
+		System.err.println("Unsupported PDF version: "+ docType.getVersion() + ";\nthe source document may contain unsupported features.\nUsing PDF Version 1.7 instead.");
 		docType.setVersion("1.7");
 	}
 	// create a dest. document of the same type and version of the source document
@@ -367,6 +400,134 @@ protected boolean createDestDocument()
 	}
 	dstDoc					= PDDocument.createFromCos(cosDstDoc);
 
+	return true;
+}
+
+/******************
+	Read parameter file
+*******************
+
+Reads and parses a parameter file, setting imposition parameters accordingly.
+
+Parameters:	fileName: the file to parse
+Returns:	true = success | false = unrecoverable failure */
+
+public boolean readParamFile(String fileName)
+{
+	FileInputStream	paramStream;
+	File			paramFile	= new File(fileName);
+	String			filePath	= paramFile.getAbsoluteFile().getParent();
+	boolean			inFile		= false;
+	String			tagContent	= null;
+	try {
+		paramStream = new FileInputStream(paramFile);
+	} catch (FileNotFoundException e) {
+		System.err.println("Error opening parameter file: " + fileName);
+		return false;
+	}
+	try {
+		XMLInputFactory	factory		= XMLInputFactory.newInstance();
+		XMLStreamReader	reader		= factory.createXMLStreamReader(paramStream);
+
+		while(reader.hasNext())
+		{
+			int event = reader.next();
+			switch(event)
+			{
+/*			case XMLStreamConstants.START_DOCUMENT:
+				break; */
+			case XMLStreamConstants.START_ELEMENT:
+				if (reader.getLocalName().toLowerCase().equals("jpdfimposition"))
+					inFile = true;
+				break;
+
+			case XMLStreamConstants.CHARACTERS:
+				tagContent = reader.getText().trim();
+				break;
+
+			case XMLStreamConstants.END_ELEMENT:
+				if (!inFile)
+				{
+					System.err.println("Parameter file " + fileName + " does not seem a jPDFImposition file");
+					return false;
+				}
+				switch(reader.getLocalName().toLowerCase())
+				{
+				case "jpdfimposition":
+					break;
+				case "input":
+				{
+					File file = new File(tagContent);
+					String fullFilePath = file.isAbsolute() ?
+							tagContent : filePath + File.separator + tagContent;
+					setSourceFileName(fullFilePath);
+					break;
+				}
+				case "output":
+				{
+					File file = new File(tagContent);
+					outputFileName = file.isAbsolute() ?
+							tagContent : filePath + File.separator + tagContent;
+					break;
+				}
+				case "format":
+					format = JPDImposition.formatStringToVal(tagContent);
+					break;
+				case "sheetspersign":
+					try {
+						maxSheetsPerSign = Integer.parseInt(tagContent);
+					} catch (NumberFormatException e) {
+						System.err.println("Invalid or empty \"sheetsPerSign\" tag: " + tagContent
+								+ "; setting to " + JPDImposition.DEFAULT_SHEETS_PER_SIGN);
+						maxSheetsPerSign = JPDImposition.DEFAULT_SHEETS_PER_SIGN;
+					}
+					break;
+				case "backoffsetx":
+					try {
+						pageOffsetX[BACK_PAGE] = Double.parseDouble(tagContent) * MM2PDF;
+					} catch (NullPointerException | NumberFormatException e) {
+						System.err.println("Invalid or empty \"backOffsetX\" tag: " + tagContent
+								+ "; setting to 0");
+						pageOffsetX[BACK_PAGE] = 0.0;
+					}
+					break;
+				case "backoffsety":
+					try {
+						pageOffsetY[BACK_PAGE] = Double.parseDouble(tagContent) * MM2PDF;
+					} catch (NullPointerException | NumberFormatException e) {
+						System.err.println("Invalid or empty \"backOffsetY\" tag: " + tagContent
+								+ "; setting to 0");
+						pageOffsetY[BACK_PAGE] = 0.0;
+					}
+					break;
+				case "frontoffsetx":
+					try {
+						pageOffsetX[FRONT_PAGE] = Double.parseDouble(tagContent) * MM2PDF;
+					} catch (NullPointerException | NumberFormatException e) {
+						System.err.println("Invalid or empty \"frontOffsetX\" tag: " + tagContent
+								+ "; setting to 0");
+						pageOffsetX[FRONT_PAGE] = 0.0;
+					}
+					break;
+				case "frontoffsety":
+					try {
+						pageOffsetY[FRONT_PAGE] = Double.parseDouble(tagContent) * MM2PDF;
+					} catch (NullPointerException | NumberFormatException e) {
+						System.err.println("Invalid or empty \"frontOffsetY\" tag: " + tagContent
+								+ "; setting to 0");
+						pageOffsetY[FRONT_PAGE] = 0.0;
+					}
+					break;
+				default:
+					System.err.println("Unknown parameter '" + tagContent + "' in parameter file " + fileName);
+				}
+				break;
+			}
+		}
+	} catch (XMLStreamException e1) {
+		System.err.println("Error parsing parameter file " + fileName + ": " + e1.getMessage());
+		return false;
+	}
 	return true;
 }
 
