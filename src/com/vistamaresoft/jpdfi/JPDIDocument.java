@@ -12,8 +12,10 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.TreeSet;
 
 import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamConstants;
@@ -35,6 +37,9 @@ import de.intarsys.pdf.cos.COSName;
 import de.intarsys.pdf.cos.COSNull;
 import de.intarsys.pdf.cos.COSObject;
 import de.intarsys.pdf.cos.COSStream;
+import de.intarsys.pdf.encoding.WinAnsiEncoding;
+import de.intarsys.pdf.font.PDFont;
+import de.intarsys.pdf.font.PDFontType1;
 import de.intarsys.pdf.parser.COSLoadException;
 import de.intarsys.pdf.pd.PDDocument;
 //import de.intarsys.pdf.pd.PDForm;
@@ -52,17 +57,19 @@ import de.intarsys.tools.locator.FileLocator;
 public class JPDIDocument extends Object
 {
 private PDDocument				dstDoc, srcDoc;
+private TreeSet<Integer>		foldOutList;
 private JPDImposition.Format	format;
 private JPDImposition			impo;
 private String					inputFileName;
 private int						maxSheetsPerSign;
 private String					outputFileName;
+private int						pageNoOffset	= 0;
 private double					pageOffsetX[]	= { 0.0, 0.0 };
 private double					pageOffsetY[]	= { 0.0, 0.0 };
 
-private static final int		FRONT_PAGE		= 0;
+private static final int		FRONT_PAGE		= 0;			// for indices into pageOffsetX/Y
 private static final int		BACK_PAGE		= 1;
-private static final double		MM2PDF			= 72 / 25.4;
+private static final double		MM2PDF			= 72 / 25.4;	// to convert mm to PDF default units (1/72 inch)
 
 public static final boolean		useMerger		= true;
 
@@ -86,12 +93,13 @@ public JPDIDocument(String filename)
 private void init()
 {
 	dstDoc				= null;
+	foldOutList			= new TreeSet<Integer>();
+	inputFileName		= outputFileName = null;
 	impo				= new JPDImposition();
 	format				= impo.format();
 	maxSheetsPerSign	= impo.maxSheetsPerSignature();
 	pageOffsetX[FRONT_PAGE]	= pageOffsetX[BACK_PAGE]
 			= pageOffsetY[FRONT_PAGE] = pageOffsetY[BACK_PAGE] = 0.0;
-	inputFileName		= outputFileName = null;
 }
 
 /******************
@@ -105,13 +113,20 @@ public boolean impose()
 		return false;
 	if (!createDestDocument())
 		return false;
-	PDPageTree	pageTree 	= srcDoc.getPageTree();
-	impo.setFormat(format, maxSheetsPerSign, pageTree.getCount());
+	PDPageTree			pageTree 	= srcDoc.getPageTree();
+	PDPage				currSrcPage	= pageTree.getFirstPage();
+	int					currSignNo	= 0;
+	JPDIResourceMerger	merger 		= null;
+	ArrayList<PDPage>	singlePages	= new ArrayList<PDPage>();
+	try {
+		impo.setFormat(format, maxSheetsPerSign, pageTree.getCount(), foldOutList);
+	} catch (CloneNotSupportedException e) {
+		System.err.println("Error while processing the format: " + e.getMessage());
+		e.printStackTrace();
+	}
 	HashMap<COSIndirectObject, COSCompositeObject> resMap =
 			new HashMap<COSIndirectObject, COSCompositeObject>();
-	JPDIResourceMerger merger = null;
-	PDPage	currSrcPage	= pageTree.getFirstPage();
-	int		currSignNo	= 0;
+
 	// for each signature
 	while (currSrcPage != null)
 	{
@@ -152,6 +167,16 @@ public boolean impose()
 				currSignPageNo++)
 		{
 			int destPageNo = impo.pageDestPage(currSignPageNo, currSignNo);
+			if (destPageNo == JPDImposition.NO_PAGE)
+				continue;
+
+			// OUT-OF-SEQUENCE PAGE SPECIAL CASE (typically for page opposite to fold-out)
+			if (destPageNo == JPDImposition.OUT_OF_SEQUENCE_PAGE)
+			{
+				createSinglePage(currSrcPage, impo.pageDestRow(currSignPageNo, currSignNo), singlePages, resMap);
+				currSrcPage = currSrcPage.getNextPage();
+				continue;
+			}
 
 			// set PAGE TRANSFORMATION into destination place
 
@@ -215,6 +240,10 @@ public boolean impose()
 			merger.releaseDestPages();
 		currSignNo++;
 	}
+	// add single pages, if any
+	for (int i = 0; i < singlePages.size(); i++)
+			dstDoc.addPageNode(singlePages.get(i));
+
 	return true;
 }
 
@@ -304,6 +333,51 @@ public void setSourceFileName(String filename) /*throws IOException, COSLoadExce
 }
 
 /******************
+	Create single page
+*******************
+
+Creates a copy of single page, typically for a fold-out. */
+
+
+protected boolean createSinglePage(PDPage currSrcPage, int gluePageNo, ArrayList<PDPage> singlePages,
+		HashMap<COSIndirectObject, COSCompositeObject> resMap)
+{
+	PDPage			destPage	= (PDPage) PDPage.META.createNew();
+	CSContent		destContent	= CSContent.createNew();
+	CSCreator		destCreator	= CSCreator.createFromContent(destContent, currSrcPage);
+	CDSRectangle	box = currSrcPage.getMediaBox().copy().normalize();
+	destPage.setMediaBox(box);
+	destCreator.copy(currSrcPage.getContentStream());
+
+	if (gluePageNo > 0)
+	{
+		PDFont font = PDFontType1.createNew(PDFontType1.FONT_Courier);
+		font.setEncoding(WinAnsiEncoding.UNIQUE);
+		destCreator.textSetFont(null, font, 6);
+		destCreator.textSetTransform(0, 1, -1, 0, 0, 0);	// 90° counter-clockwise rotation
+		// place at 1/6" from margin, mid-height
+		// if gluing to odd page, place at left margin; if even, place at right margin
+		destCreator.textLineMoveTo( (gluePageNo & 1) == 1 ? 12 : box.getWidth()-12, box.getHeight()/2);
+		destCreator.textShow("p. " + (gluePageNo + pageNoOffset + 1));
+	}
+
+	destCreator.close();
+	// add content to dest. page
+	COSStream pageStream = destContent.createStream();
+	pageStream.addFilter(COSName.constant("FlateDecode"));
+	destPage.cosAddContents(pageStream);
+	// add resources, if any
+	if (currSrcPage.getResources() != null)
+	{
+		COSObject	cosResourcesCopy	= currSrcPage.getResources().cosGetObject().copyDeep(resMap);
+		PDResources	pdResourcesCopy		= (PDResources) PDResources.META.createFromCos(cosResourcesCopy);
+		destPage.setResources(pdResourcesCopy);
+	}
+	singlePages.add(destPage);
+
+	return true;
+}
+/******************
 	Merge a source resource dictionary into a destination resource dictionary
 *******************/
 
@@ -375,8 +449,6 @@ Only PDF versions up to "1.7" are supported; greater PDF versions are downgraded
 
 protected boolean createDestDocument()
 {
-//	dstDoc = PDDocument.createNew();
-
 	// retrieve and check source document type and version
 	STDocType docType = srcDoc.cosGetDoc().stGetDoc().getDocType();
 	if (!docType.getTypeName().equals("PDF"))
@@ -418,7 +490,7 @@ public boolean readParamFile(String fileName)
 	File			paramFile	= new File(fileName);
 	String			filePath	= paramFile.getAbsoluteFile().getParent();
 	boolean			inFile		= false;
-	String			tagContent	= null;
+
 	try {
 		paramStream = new FileInputStream(paramFile);
 	} catch (FileNotFoundException e) {
@@ -431,97 +503,86 @@ public boolean readParamFile(String fileName)
 
 		while(reader.hasNext())
 		{
-			int event = reader.next();
+			int	event	= reader.next();
+			int	intVal;
 			switch(event)
 			{
 /*			case XMLStreamConstants.START_DOCUMENT:
 				break; */
 			case XMLStreamConstants.START_ELEMENT:
 				if (reader.getLocalName().toLowerCase().equals("jpdfimposition"))
+				{
 					inFile = true;
-				break;
-
-			case XMLStreamConstants.CHARACTERS:
-				tagContent = reader.getText().trim();
-				break;
-
-			case XMLStreamConstants.END_ELEMENT:
+					break;
+				}
 				if (!inFile)
 				{
 					System.err.println("Parameter file " + fileName + " does not seem a jPDFImposition file");
 					return false;
 				}
-				switch(reader.getLocalName().toLowerCase())
+				String	val			= reader.getAttributeValue(0);
+				String	elementName	= reader.getLocalName();
+				switch(elementName.toLowerCase())
 				{
 				case "jpdfimposition":
 					break;
 				case "input":
 				{
-					File file = new File(tagContent);
-					String fullFilePath = file.isAbsolute() ?
-							tagContent : filePath + File.separator + tagContent;
+					File file = new File(val);
+					String fullFilePath = file.isAbsolute() ? val : filePath + File.separator + val;
 					setSourceFileName(fullFilePath);
 					break;
 				}
 				case "output":
 				{
-					File file = new File(tagContent);
-					outputFileName = file.isAbsolute() ?
-							tagContent : filePath + File.separator + tagContent;
+					File file = new File(val);
+					outputFileName = file.isAbsolute() ? val : filePath + File.separator + val;
 					break;
 				}
 				case "format":
-					format = JPDImposition.formatStringToVal(tagContent);
+					format = JPDImposition.formatStringToVal(val);
 					break;
 				case "sheetspersign":
-					try {
-						maxSheetsPerSign = Integer.parseInt(tagContent);
-					} catch (NumberFormatException e) {
-						System.err.println("Invalid or empty \"sheetsPerSign\" tag: " + tagContent
-								+ "; setting to " + JPDImposition.DEFAULT_SHEETS_PER_SIGN);
-						maxSheetsPerSign = JPDImposition.DEFAULT_SHEETS_PER_SIGN;
-					}
+					maxSheetsPerSign = getIntParam(val, elementName, 
+							JPDImposition.DEFAULT_SHEETS_PER_SIGN);
 					break;
 				case "backoffsetx":
-					try {
-						pageOffsetX[BACK_PAGE] = Double.parseDouble(tagContent) * MM2PDF;
-					} catch (NullPointerException | NumberFormatException e) {
-						System.err.println("Invalid or empty \"backOffsetX\" tag: " + tagContent
-								+ "; setting to 0");
-						pageOffsetX[BACK_PAGE] = 0.0;
-					}
+					pageOffsetX[BACK_PAGE] = getDoubleParam(val, elementName, 0.0) * MM2PDF;
 					break;
 				case "backoffsety":
-					try {
-						pageOffsetY[BACK_PAGE] = Double.parseDouble(tagContent) * MM2PDF;
-					} catch (NullPointerException | NumberFormatException e) {
-						System.err.println("Invalid or empty \"backOffsetY\" tag: " + tagContent
-								+ "; setting to 0");
-						pageOffsetY[BACK_PAGE] = 0.0;
-					}
+					pageOffsetY[BACK_PAGE] = getDoubleParam(val, elementName, 0.0) * MM2PDF;
 					break;
 				case "frontoffsetx":
-					try {
-						pageOffsetX[FRONT_PAGE] = Double.parseDouble(tagContent) * MM2PDF;
-					} catch (NullPointerException | NumberFormatException e) {
-						System.err.println("Invalid or empty \"frontOffsetX\" tag: " + tagContent
-								+ "; setting to 0");
-						pageOffsetX[FRONT_PAGE] = 0.0;
-					}
+					pageOffsetX[FRONT_PAGE] = getDoubleParam(val, elementName, 0.0) * MM2PDF;
 					break;
 				case "frontoffsety":
-					try {
-						pageOffsetY[FRONT_PAGE] = Double.parseDouble(tagContent) * MM2PDF;
-					} catch (NullPointerException | NumberFormatException e) {
-						System.err.println("Invalid or empty \"frontOffsetY\" tag: " + tagContent
-								+ "; setting to 0");
-						pageOffsetY[FRONT_PAGE] = 0.0;
+					pageOffsetY[FRONT_PAGE] = getDoubleParam(val, elementName, 0.0) * MM2PDF;
+					break;
+				case "pagenooffset":
+					pageNoOffset = getIntParam(val, elementName, 0);
+					break;
+				case "foldout":
+					if (format != JPDImposition.Format.booklet)
+					{
+						System.err.println("\"foldout\" tag only valid with \"booklet\" format; ignoring.");
+						break;
 					}
+					intVal = getIntParam(val, elementName, -1);
+					// round down to nearest even number and then convert from 1-based to 0-based
+					intVal = ( (intVal - pageNoOffset) & 0xFFFE) - 1;
+					foldOutList.add(intVal);
 					break;
 				default:
-					System.err.println("Unknown parameter '" + tagContent + "' in parameter file " + fileName);
+					System.err.println("Unknown parameter '" + val + "' in parameter file " + fileName);
 				}
 				break;
+/*
+			case XMLStreamConstants.CHARACTERS:
+				tagContent = reader.getText().trim();
+				break;
+			case XMLStreamConstants.END_ELEMENT:
+				break;
+*/
 			}
 		}
 	} catch (XMLStreamException e1) {
@@ -529,6 +590,32 @@ public boolean readParamFile(String fileName)
 		return false;
 	}
 	return true;
+}
+
+private int getIntParam(String tagContent, String elementName, int defaultVal)
+{
+	int	val;
+	try {
+		val = Integer.parseInt(tagContent);
+	} catch (NumberFormatException e) {
+		System.err.println("Invalid or empty " + elementName + " tag: " + tagContent
+				+ "; setting to " + defaultVal);
+		val = defaultVal;
+	}
+	return val;
+}
+
+private double getDoubleParam(String tagContent, String elementName, double defaultVal)
+{
+	double	val;
+	try {
+		val = Double.parseDouble(tagContent);
+	} catch (NumberFormatException e) {
+		System.err.println("Invalid or empty " + elementName + " tag: " + tagContent
+				+ "; setting to " + defaultVal);
+		val = defaultVal;
+	}
+	return val;
 }
 
 }

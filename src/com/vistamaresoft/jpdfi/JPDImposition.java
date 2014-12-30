@@ -8,13 +8,21 @@
 
 package com.vistamaresoft.jpdfi;
 
+import java.util.ArrayList;
+import java.util.TreeSet;
+
 /******************
 	CLASS JPDImposition
 *******************/
 
 public class JPDImposition
 {
+// PUBLIC DEFINITIONS
+
 public static final int	DEFAULT_SHEETS_PER_SIGN	= 5;
+public static final int	OUT_OF_SEQUENCE_PAGE	= -1;
+public static final int	NO_PAGE					= -2;
+
 public enum Format
 {
 	in4h	(0),	// in 4° format, first fold is horizontal
@@ -30,12 +38,20 @@ public enum Format
 	public int code()		{ return this.formatCode; }
 }
 
-private class JPDIPageImpoData
+// PRIVATE DEFINITIONS
+
+private class JPDIPageImpoData implements Cloneable
 {
 	int	destPage;		/// in which page of the signature the page shall end up (0-based)
 	int	row;			/// in which row of that page (0-based)
 	int	col;			/// in which column of that page (0-based)
 	int	rotation;		// with which rotation (in degrees)
+
+	@Override
+	protected Object clone() throws CloneNotSupportedException
+	{
+		return super.clone();
+	}
 }
 
 // pre-built arrays defining the destination row and column for each of the source pages
@@ -59,12 +75,14 @@ private static final int[][] prebuiltColData =
 	{ 3, 0, 3, 0, 0, 3, 0, 3, 2, 1, 2, 1, 1, 2, 1, 2, 2, 1, 2, 1, 1, 2, 1, 2, 3, 0, 3, 0, 0, 3, 0, 3},	// in 16° v.
 };
 
-private Format				format				= Format.booklet;
-private int					maxSheetsPerSign	= DEFAULT_SHEETS_PER_SIGN;	// max num. of sheets per signature
+// FIELDS
+
+private Format	format				= Format.booklet;
+private int		maxSheetsPerSign	= DEFAULT_SHEETS_PER_SIGN;	// max num. of sheets per signature
 // for each source page of each signature, define where and how to place it into the destination
-private JPDIPageImpoData	pageImpoData[][];
-private int					totPages			= 1;	// total num. of pages in document
-private int					sheetsPerSign[];			// how many sheets each signature has
+private ArrayList<ArrayList<JPDIPageImpoData>>	pageImpoData;
+private int		totPages			= 1;	// total num. of pages in document
+private int[]	sheetsPerSign;				// how many sheets each signature has
 
 /******************
 	Default C'tor
@@ -110,7 +128,8 @@ public int numOfRows()
 }
 public int maxSheetsPerSignature()				{ return maxSheetsPerSign;	}
 
-public void setFormat(Format formalVal, int maxSheetsPerSignVal, int numOfPages)
+public void setFormat(Format formalVal, int maxSheetsPerSignVal, int numOfPages, TreeSet<Integer>foldOutList)
+		throws CloneNotSupportedException
 {
 	format				= formalVal;
 	maxSheetsPerSign	= maxSheetsPerSignVal;
@@ -119,75 +138,180 @@ public void setFormat(Format formalVal, int maxSheetsPerSignVal, int numOfPages)
 		maxSheetsPerSign = 1;
 	if (maxSheetsPerSign < 1)
 		maxSheetsPerSign = 1;
-	applyFormat();
+	applyFormat(foldOutList);
 }
 
-private void applyFormat()
+private void applyFormat(TreeSet<Integer>foldOutList) throws CloneNotSupportedException
 {
-	int		numOfCols, numOfRows;
-	
-	// set number of rows and columns according to format
-	numOfCols = numOfCols();
-	numOfRows = numOfRows();
-	// compute some helper values
-	int		pagesPerSheet	= numOfCols * numOfRows * 2;
-	int		numOfSheets		= (totPages + pagesPerSheet-1) / pagesPerSheet;
-	int		numOfSigns		= (numOfSheets + maxSheetsPerSign-1) / maxSheetsPerSign;
-	int		minSheetsPerSign= numOfSheets / numOfSigns;	// at least as many sheets per signature
-	int		extraSheets		= numOfSheets - (numOfSigns * minSheetsPerSign);	// plus as many others
-	// determine the number of sheets for each signature, assigning to each signature
-	// at least minSheetsPerSign + 1 for the first extraSheets signatures
-	sheetsPerSign	= new int[numOfSigns];
-	for (int i = 0; i < numOfSigns; i++)
-		sheetsPerSign[i] = minSheetsPerSign + (i >= extraSheets ? 0 : 1);
-	// max number of pages per signature
-	int		pagesPerSign	= (minSheetsPerSign + (extraSheets > 0 ? 1 : 0)) * numOfRows * numOfCols * 2;
+	int		docPageNo	= 0;				// the current document page no. (0-based)
+	formatSetup(foldOutList.size());
 
-	// initialize pageImpoData for each signature according to format
-	pageImpoData = new JPDIPageImpoData[numOfSigns][pagesPerSign];
-	for (int currSignNo = 0; currSignNo < numOfSigns; currSignNo++)
+	// initialize pageImpoData for each page of each signature according to format
+	int		currSignNo = 0;
+	while (docPageNo < totPages)
 	{
-		int	numOfSrcPages	= numOfSourcePagesPerSignature(currSignNo);
-		for (int currPageNo = 0; currPageNo < numOfSrcPages; currPageNo++)
+		int maxDestPage		= 0;
+		int	numOfSrcPages	= sheetsPerSign[currSignNo] * numOfCols()* numOfRows() * 2;
+		ArrayList<JPDIPageImpoData>	signImpoData = new ArrayList<JPDIPageImpoData>(numOfSrcPages);
+		pageImpoData.add(signImpoData);
+		for (int currPageNo = 0; docPageNo < totPages && currPageNo < numOfSrcPages; currPageNo++)
 		{
-			pageImpoData[currSignNo][currPageNo] = new JPDIPageImpoData();
+			JPDIPageImpoData pid = new JPDIPageImpoData();
+			signImpoData.add(pid);
+
+			// BOOKLET FOLD-OUT SPECIAL CASE
+			if (format == Format.booklet && foldOutList.contains(docPageNo))
+			{
+				// we deal here with 4 different pages:
+				// 1st: the front page of the leaf the fold-out is attached to ('base leaf', previous page)
+				// 2nd: the fold-out front page (current page, pid)
+				// 3rd: the fold-out back page
+				// 4th: the base leaf back page
+				// 2nd and 3rd (fold-out) are 'shifted' in the position of 1st and 4th (base page) resp.
+				// 1st and 4th (base page) are moved to the 'other' column of the same page
+				// the 3rd and 4th pages are yet to be seen, but are managed here anyway
+				int	currArrSize = signImpoData.size();
+				JPDIPageImpoData pid1 = signImpoData.get(currArrSize-2);
+				pid.col			= pid1.col;
+				pid.destPage	= pid1.destPage;
+				pid.rotation	= pid1.rotation;
+				pid.row			= pid1.row;
+				// shift 1st page in the 'other' column
+				pid1.col = 1  - pid.col;
+				// 'next page' is +1 while 'going up' the signature (front leaves) and 1st page is on even dest. page
+				// and -1 while 'going down' (back leaves) and 1st page is on odd dest. page
+				int	nextPageOffset	= (pid.destPage & 1) > 0 ? -1 : +1;
+				// if 'going down', the single leaf opposite to the fold-out sheet has already been seen:
+				// locate its two pages and move them out of sequence
+				if (nextPageOffset == -1)
+				{
+					signImpoData.get(currArrSize-3).destPage	= OUT_OF_SEQUENCE_PAGE;
+					signImpoData.get(currArrSize-3).row			= docPageNo - 1;	// glue to pid1
+					signImpoData.get(currArrSize-4).destPage	= OUT_OF_SEQUENCE_PAGE;
+				}
+//				currPageNo++;		// NO: fold-out pages do not count for imposition
+				docPageNo++;
+				if (pid.destPage > maxDestPage)
+					maxDestPage = pid.destPage;
+				if (docPageNo < totPages)
+				{
+					// fold-out back page (3rd page) is in the same position, but of next sheet, of 1st page
+					JPDIPageImpoData pid3 = (JPDIPageImpoData)pid1.clone();
+					signImpoData.add(pid3);
+					pid3.destPage = pid1.destPage + nextPageOffset;
+					// back page of base leaf (4th page) is in the same position, but of next page, of 2nd page
+//					currPageNo++;		// NO: fold-out pages do not count for imposition
+					docPageNo++;
+					if (pid3.destPage > maxDestPage)
+						maxDestPage = pid3.destPage;
+					if (docPageNo < totPages)
+					{
+						JPDIPageImpoData pid4 = (JPDIPageImpoData)pid.clone();
+						signImpoData.add(pid4);
+						pid4.destPage	= pid.destPage + nextPageOffset;
+						docPageNo++;
+					}
+				}
+				continue;
+			}
+
 			// DESTINATION PAGE
-			pageImpoData[currSignNo][currPageNo].destPage = (sheetsPerSign[currSignNo] == 1) ?
+			pid.destPage = (sheetsPerSign[currSignNo] == 1) ?
 					// if 1 sheet x sign. (any non-booklet or in-folio booklet):
 					//	dest. page either 0 or 1, according to pagenum / 2 is even or odd
 					((currPageNo+1) / 2) & 0x0001
 					// several sheets x sign. (booklet):
 					//	dest. page first increases then decreases
 					: Math.min (currPageNo, numOfSrcPages-1 - currPageNo);
-
 			// DESTINATION ROW
-			pageImpoData[currSignNo][currPageNo].row = (format == Format.booklet) ?
+			pid.row = (format == Format.booklet) ?
 					// if 1 row x sheet: row always = 0
 					0
 					// several rows per sheet: use pre-built data
 					: prebuiltRowData[format.code()][currPageNo];
-
 			// ROTATION: 0 for even rows, 180 for odd rows
-			pageImpoData[currSignNo][currPageNo].rotation =
-					(pageImpoData[currSignNo][currPageNo].row & 1) != 0 ? 180 : 0;
-
+			pid.rotation = (pid.row & 1) != 0 ? 180 : 0;
 			// DESTINATION COLUMN
-			pageImpoData[currSignNo][currPageNo].col = (format == Format.booklet) ?
+			pid.col = (format == Format.booklet) ?
 					// column alternates 1 & 0
 					1 - (currPageNo & 1)
 					// single sheets per sign.: use pre-built data
 					: prebuiltColData[format.code()][currPageNo];
+
+			// BOOKLET FOLD-OUT SPECIAL CASE:
+			// is this a page of the leaf to be glued to a fold-out?
+			if (format == Format.booklet)
+				// if the place of this page is already taken by a previous page
+				// this is the page opposite to a fold-out: mark as out-of-sequence
+				for (int i = 0; i <= signImpoData.size()-2; i++)
+					if (signImpoData.get(i).destPage == pid.destPage
+							&& signImpoData.get(i).col == pid.col)
+					{
+						// if this is the back page (destination page is odd), note page to glue to
+						if ((pid.destPage & 1) == 1)
+							pid.row = docPageNo - signImpoData.size() + i + 1;
+						pid.destPage = OUT_OF_SEQUENCE_PAGE;
+						break;
+					}
+
+			if (pid.destPage > maxDestPage)
+				maxDestPage = pid.destPage;
+			docPageNo++;
 		}
+		// set actual number of signature sheets
+		sheetsPerSign[currSignNo] = ((maxDestPage + 2) & 0xFFFE) / 2;
+		currSignNo++;
 	}
 }
 
+/******************
+	Format setup
+*******************
+
+Sets arrays up for application of imposition. */
+
+private void formatSetup(int numOfFoldOuts)
+{
+	int		numOfCols, numOfRows;
+
+	// set number of rows and columns according to format
+	numOfCols = numOfCols();
+	numOfRows = numOfRows();
+	// compute some helper values
+	int	pagesPerSheet	= numOfCols * numOfRows * 2;
+	// if booklet, exclude fold-out pages from pages usable for sheets
+	int	numOfSheetPages	= totPages - (format == Format.booklet ? numOfFoldOuts*2 : 0);
+	// round up number of sheets and number of signatures
+	int	numOfSheets		= (numOfSheetPages + pagesPerSheet-1) / pagesPerSheet;
+	int	numOfSigns		= (numOfSheets + maxSheetsPerSign-1) / maxSheetsPerSign;
+	// signature balancing: at least as many sheets per signature:
+	int	minSheetsPerSign= numOfSheets / numOfSigns;
+	// and as many other sheets to distribute across all signatures (of course, extraSheets < numOfSigns)
+	int	extraSheets		= numOfSheets - (numOfSigns * minSheetsPerSign);
+	// determine the number of sheets for each signature, assigning to each signature
+	// at least minSheetsPerSign + 1 for the first extraSheets signatures
+	sheetsPerSign		= new int[numOfSigns];
+	pageImpoData		= new ArrayList<ArrayList<JPDIPageImpoData>>();
+	// max number of pages per signature
+	for (int i = 0; i < numOfSigns; i++)
+		sheetsPerSign[i]	= minSheetsPerSign + (i >= extraSheets ? 0 : 1);
+}
+
+/******************
+	Getters for numbers of source / destination pages
+*******************/
+
 public int	numOfSourcePagesPerSignature(int signNo)
 {
-	return sheetsPerSign[signNo] * numOfCols() * numOfRows() * 2;
+	if (signNo < 0 || signNo > pageImpoData.size() - 1)
+		return 0;
+	return pageImpoData.get(signNo).size();
 }
 
 public int numOfDestPagesPerSignature(int signNo)
 {
+	if (signNo < 0 || signNo > sheetsPerSign.length - 1)
+		return 0;
 	return sheetsPerSign[signNo] * 2;
 }
 
@@ -197,43 +321,43 @@ public int numOfDestPagesPerSignature(int signNo)
 
 public int pageDestPage(int srcPageNo, int signNo)
 {
-	if (srcPageNo < 0 || srcPageNo > pageImpoData[signNo].length-1)
-		srcPageNo = 0;
-	return pageImpoData[signNo][srcPageNo].destPage;
+	if (srcPageNo < 0 || srcPageNo > pageImpoData.get(signNo).size()-1)
+		return NO_PAGE;
+	return pageImpoData.get(signNo).get(srcPageNo).destPage;
 }
 public int pageDestRow(int srcPageNo, int signNo)
 {
-	if (srcPageNo < 0 || srcPageNo > pageImpoData[signNo].length-1)
+	if (srcPageNo < 0 || srcPageNo > pageImpoData.get(signNo).size()-1)
 		srcPageNo = 0;
-	return pageImpoData[signNo][srcPageNo].row;
+	return pageImpoData.get(signNo).get(srcPageNo).row;
 }
 public int pageDestCol(int srcPageNo, int signNo)
 {
-	if (srcPageNo < 0 || srcPageNo > pageImpoData[signNo].length-1)
+	if (srcPageNo < 0 || srcPageNo > pageImpoData.get(signNo).size()-1)
 		srcPageNo = 0;
-	return pageImpoData[signNo][srcPageNo].col;
+	return pageImpoData.get(signNo).get(srcPageNo).col;
 }
 // Rotation: if page is upside down, add an extra col and row of offset,
 // to compensate the rotation around the bottom left corner
 public double pageDestOffsetX(int srcPageNo, int signNo, double srcPageWidth)
 {
-	if (srcPageNo < 0 || srcPageNo > pageImpoData[signNo].length-1)
+	if (srcPageNo < 0 || srcPageNo > pageImpoData.get(signNo).size()-1)
 		srcPageNo = 0;
-	return srcPageWidth * pageImpoData[signNo][srcPageNo].col
-			+ (pageImpoData[signNo][srcPageNo].rotation > 0 ? srcPageWidth : 0.0);
+	return srcPageWidth * pageImpoData.get(signNo).get(srcPageNo).col
+			+ (pageImpoData.get(signNo).get(srcPageNo).rotation > 0 ? srcPageWidth : 0.0);
 }
 public double pageDestOffsetY(int srcPageNo, int signNo, double srcPageHeight)
 {
-	if (srcPageNo < 0 || srcPageNo > pageImpoData[signNo].length-1)
+	if (srcPageNo < 0 || srcPageNo > pageImpoData.get(signNo).size()-1)
 		srcPageNo = 0;
-	return srcPageHeight * pageImpoData[signNo][srcPageNo].row
-			+ (pageImpoData[signNo][srcPageNo].rotation > 0 ? srcPageHeight : 0.0);
+	return srcPageHeight * pageImpoData.get(signNo).get(srcPageNo).row
+			+ (pageImpoData.get(signNo).get(srcPageNo).rotation > 0 ? srcPageHeight : 0.0);
 }
 public int pageDestRotation(int srcPageNo, int signNo)
 {
-	if (srcPageNo < 0 || srcPageNo > pageImpoData[signNo].length-1)
+	if (srcPageNo < 0 || srcPageNo > pageImpoData.get(signNo).size()-1)
 		srcPageNo = 0;
-	return pageImpoData[signNo][srcPageNo].rotation;
+	return pageImpoData.get(signNo).get(srcPageNo).rotation;
 }
 
 /******************
