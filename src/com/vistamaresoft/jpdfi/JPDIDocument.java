@@ -31,7 +31,6 @@ import de.intarsys.pdf.cos.COSCompositeObject;
 import de.intarsys.pdf.cos.COSDocument;
 import de.intarsys.pdf.cos.COSDocumentElement;
 import de.intarsys.pdf.cos.COSDictionary;
-//import de.intarsys.pdf.cos.COSDocument;
 import de.intarsys.pdf.cos.COSIndirectObject;
 import de.intarsys.pdf.cos.COSName;
 import de.intarsys.pdf.cos.COSNull;
@@ -42,9 +41,7 @@ import de.intarsys.pdf.font.PDFont;
 import de.intarsys.pdf.font.PDFontType1;
 import de.intarsys.pdf.parser.COSLoadException;
 import de.intarsys.pdf.pd.PDDocument;
-//import de.intarsys.pdf.pd.PDForm;
 import de.intarsys.pdf.pd.PDPage;
-//import de.intarsys.pdf.pd.PDPageNode;
 import de.intarsys.pdf.pd.PDPageTree;
 import de.intarsys.pdf.pd.PDResources;
 import de.intarsys.pdf.st.STDocType;
@@ -56,20 +53,143 @@ import de.intarsys.tools.locator.FileLocator;
 
 public class JPDIDocument extends Object
 {
-private PDDocument				dstDoc, srcDoc;
-private TreeSet<Integer>		foldOutList;
-private JPDImposition.Format	format;
-private JPDImposition			impo;
-private String					inputFileName;
-private int						maxSheetsPerSign;
-private String					outputFileName;
-private int						pageNoOffset	= 0;
-private double					pageOffsetX[]	= { 0.0, 0.0 };
-private double					pageOffsetY[]	= { 0.0, 0.0 };
+// PRIVATE DEFINITIONS
 
 private static final int		FRONT_PAGE		= 0;			// for indices into pageOffsetX/Y
 private static final int		BACK_PAGE		= 1;
 private static final double		MM2PDF			= 72 / 25.4;	// to convert mm to PDF default units (1/72 inch)
+
+// Data about a source document
+
+private class JPDISourceDoc
+{
+	String	fileName;							// the document file name (hopefully as an absolute path)
+//	int		fromPage, toPage;					// this document is used from page fromPage to page toPage
+	int		numOfPages;							// number of pages this document will provide
+	int		pageNoOffset;						// the offset from page sequence index to page number
+	PDDocument	doc;							// the document itself
+}
+
+// Data about the current source status
+
+private class JPDISourceStatus
+{
+	protected	int			currDocNo;		// the index of the current source document into the srcDocs array
+	protected	PDDocument	currDoc;		// the current source document
+	protected	PDPage		currPage;		// the current source page
+	protected	ArrayList<JPDISourceDoc>	srcDocs;		// the various source documents
+
+	public void init()
+	{
+		currDocNo	= -1;					// before first document
+		currDoc		= null;
+		currPage	= null;
+		if (srcDocs == null)
+			srcDocs	= new ArrayList<JPDISourceDoc>();
+		else
+			srcDocs.clear();
+	}
+
+	/******************
+		Getters / Setters
+	*******************/
+
+	public PDDocument currDoc()		{ return currDoc;	}
+
+	public String inputFileNames()
+	{
+		String fileNames = "";;
+		for (JPDISourceDoc doc : srcDocs)
+			fileNames += doc.fileName + "\n";
+		return fileNames;
+	}
+
+	public PDPage nextPage()
+	{
+		if (currPage != null)
+			currPage = currPage.getNextPage();
+		if (currPage == null)
+			if (srcDocs != null && currDocNo < srcDocs.size()-1)
+			{
+//				closeSrcDoc(currDoc);
+				currDocNo++;
+//				currDoc = openSrcDoc(srcDocs.get(currDocNo).fileName);
+				currDoc = srcDocs.get(currDocNo).doc;
+				if (currDoc != null)
+				{
+					PDPageTree	pageTree 	= currDoc.getPageTree();
+					currPage				= pageTree.getFirstPage();
+				}
+			}
+		return currPage;
+	}
+
+	public int pageNoOffset()
+	{
+		if (srcDocs != null || srcDocs.size() > 0)
+			return srcDocs.get(srcDocs.size()-1).pageNoOffset;
+		return 0;
+	}
+
+	public void setPageNoOffset(int pageNoOffset)
+	{
+		if (srcDocs != null || srcDocs.size() > 0)
+			srcDocs.get(srcDocs.size()-1).pageNoOffset = pageNoOffset;
+	}
+
+	public int totPages()
+	{
+		if (srcDocs == null || srcDocs.size() == 0)
+			return 0;
+		int	totPages = 0;
+		for (JPDISourceDoc doc : srcDocs)
+			totPages += doc.numOfPages;
+		return totPages;
+	}
+
+	/******************
+		ADD A NEW SOURCE DOCUMENT
+	*******************/
+
+	public JPDISourceDoc addSrcDoc(String fileName)
+	{
+		PDDocument	doc	= openSrcDoc(fileName);
+		if (doc == null)
+			return null;
+		PDPageTree	pageTree 	= doc.getPageTree();
+		int			numOfPages	= pageTree.getCount();
+		// TODO : make JPDISourceStatus an Observable by JPDIResourceManager
+		// so that the latter can flush the page maps when source document changes
+		// for the moment being, just keep all source documents always open,
+		// in order to have all objects of all documents always valid
+//		if (!closeSrcDoc(doc))
+//			return null;
+		// create a new JPDISourceDoc and add it to the list
+		JPDISourceDoc	srcDoc	= new JPDISourceDoc();
+		srcDoc.fileName			= fileName;
+		srcDoc.doc				= doc;
+		srcDoc.numOfPages		= numOfPages;
+		// inherit page num. offset from previous document
+		if (srcDocs.size() > 0)
+			srcDoc.pageNoOffset	= srcDocs.get(srcDocs.size()-1).pageNoOffset;
+		srcDocs.add(srcDoc);
+		return srcDoc;
+	}
+}
+
+// FIELDS
+
+private PDDocument				dstDoc;
+private TreeSet<Integer>		foldOutList;
+private JPDImposition.Format	format;
+private JPDImposition			impo;
+private PDFont					impoFont;
+private COSName					impoFontName;
+private int						maxSheetsPerSign;
+private String					outputFileName;
+private double					pageOffsetX[]	= { 0.0, 0.0 };
+private double					pageOffsetY[]	= { 0.0, 0.0 };
+private JPDISourceStatus		srcStatus;
 
 public static final boolean		useMerger		= true;
 
@@ -79,27 +199,33 @@ public static final boolean		useMerger		= true;
 
 public JPDIDocument()
 {
-	srcDoc				= null;
 	init();
 }
 
-public JPDIDocument(String filename)
+public JPDIDocument(String fileName)
 {
-	if (filename != null)
-		setSourceFileName(filename);
 	init();
+	if (fileName != null)
+		srcStatus.addSrcDoc(fileName);
 }
 
 private void init()
 {
 	dstDoc				= null;
-	foldOutList			= new TreeSet<Integer>();
-	inputFileName		= outputFileName = null;
+	if (foldOutList == null)
+		foldOutList		= new TreeSet<Integer>();
+	else
+		foldOutList.clear();
+	outputFileName		= null;
 	impo				= new JPDImposition();
+	impoFont			= null;
 	format				= impo.format();
 	maxSheetsPerSign	= impo.maxSheetsPerSignature();
 	pageOffsetX[FRONT_PAGE]	= pageOffsetX[BACK_PAGE]
 			= pageOffsetY[FRONT_PAGE] = pageOffsetY[BACK_PAGE] = 0.0;
+	if (srcStatus == null)
+		srcStatus		= new JPDISourceStatus();
+	srcStatus.init();
 }
 
 /******************
@@ -109,17 +235,22 @@ Fills the document with data from sourceDoc according to impo. */
 
 public boolean impose()
 {
+	if (format == JPDImposition.Format.none)
+		return merge();
+
+	PDPage	currSrcPage	= srcStatus.nextPage();
+	if (currSrcPage == null)
+		return false;
+	PDDocument			srcDoc 		= srcStatus.currDoc();
 	if (srcDoc == null)
 		return false;
-	if (!createDestDocument())
+	if (!createDestDocument(srcDoc))
 		return false;
-	PDPageTree			pageTree 	= srcDoc.getPageTree();
-	PDPage				currSrcPage	= pageTree.getFirstPage();
 	int					currSignNo	= 0;
 	JPDIResourceMerger	merger 		= null;
 	ArrayList<PDPage>	singlePages	= new ArrayList<PDPage>();
 	try {
-		impo.setFormat(format, maxSheetsPerSign, pageTree.getCount(), foldOutList);
+		impo.setFormat(format, maxSheetsPerSign, srcStatus.totPages(), foldOutList);
 	} catch (CloneNotSupportedException e) {
 		System.err.println("Error while processing the format: " + e.getMessage());
 		e.printStackTrace();
@@ -133,7 +264,7 @@ public boolean impose()
 		int		numOfDestPages = impo.numOfDestPagesPerSignature(currSignNo);
 		if (useMerger)
 			if (merger == null)
-				merger = new JPDIResourceMerger(dstDoc, numOfDestPages);
+				merger = new JPDIResourceMerger(/*dstDoc,*/ numOfDestPages);
 			else
 				merger.setNumOfDestPages(numOfDestPages);
 		// get destination crop box from source page crop box
@@ -174,7 +305,7 @@ public boolean impose()
 			if (destPageNo == JPDImposition.OUT_OF_SEQUENCE_PAGE)
 			{
 				createSinglePage(currSrcPage, impo.pageDestRow(currSignPageNo, currSignNo), singlePages, resMap);
-				currSrcPage = currSrcPage.getNextPage();
+				currSrcPage = srcStatus.nextPage();
 				continue;
 			}
 
@@ -210,7 +341,7 @@ public boolean impose()
 				}
 			}
 			destCreator[destPageNo].restoreState();
-			currSrcPage = currSrcPage.getNextPage();
+			currSrcPage = srcStatus.nextPage();
 		}
 
 		// signature is complete: add dest. pages to dest. document
@@ -243,10 +374,64 @@ public boolean impose()
 	// add single pages, if any
 	for (int i = 0; i < singlePages.size(); i++)
 			dstDoc.addPageNode(singlePages.get(i));
+	try {
+		srcDoc.close();
+	} catch (IOException e) {
+		// empty catch: if we cannot close it, just ingore it!
+	}
 
 	return true;
 }
 
+/******************
+	MERGE
+*******************
+Merges source documents into destination document.
+A special case of impose() when imposition format is Format.none */
+
+public boolean merge()
+{
+	PDPage		currSrcPage	= srcStatus.nextPage();
+	if (currSrcPage == null)
+		return false;
+	PDDocument	srcDoc 		= srcStatus.currDoc();
+	if (srcDoc == null)
+		return false;
+	if (!createDestDocument(srcDoc))
+		return false;
+	HashMap<COSIndirectObject, COSCompositeObject> resMap =
+			new HashMap<COSIndirectObject, COSCompositeObject>();
+
+	// for each signature
+	while (currSrcPage != null)
+	{
+		PDPage			destPage	= (PDPage) PDPage.META.createNew();
+		CSContent		destContent	= CSContent.createNew();
+		CSCreator		destCreator	= CSCreator.createFromContent(destContent, currSrcPage);
+		CDSRectangle	box = currSrcPage.getMediaBox().copy().normalize();
+		destPage.setMediaBox(box);
+		destCreator.copy(currSrcPage.getContentStream());
+		destCreator.close();
+		// add content to dest. page
+		COSStream pageStream = destContent.createStream();
+		pageStream.addFilter(COSName.constant("FlateDecode"));
+		destPage.cosAddContents(pageStream);
+		// add resources, if any
+		if (currSrcPage.getResources() != null)
+		{
+			COSObject	cosResourcesCopy	= currSrcPage.getResources().cosGetObject().copyDeep(resMap);
+			PDResources	pdResourcesCopy		= (PDResources) PDResources.META.createFromCos(cosResourcesCopy);
+			destPage.setResources(pdResourcesCopy);
+		}
+		// add page to doc and release objects no longer needed
+		dstDoc.addPageNode(destPage);
+		destCreator	= null;		// a bit of paranoia!
+		destContent	= null;
+		destPage	= null;
+		currSrcPage = srcStatus.nextPage();
+	}
+	return true;
+}
 /******************
 	Save the destination document
 *******************/
@@ -274,11 +459,11 @@ protected boolean save() /*throws IOException*/
 	Getters
 *******************/
 
-public JPDImposition.Format	format()	{ return impo.format();		}
+public JPDImposition.Format	format()	{ return impo.format();					}
 
-public String getInputFileName()		{ return inputFileName;		}
+public String getInputFileNames()		{ return srcStatus.inputFileNames();	}
 
-public String getOutputFileName()		{ return outputFileName;	}
+public String getOutputFileName()		{ return outputFileName;				}
 
 /******************
 	Setters
@@ -301,35 +486,44 @@ public void setFormat(String formatStr, String sheetsPerSignStr)
 
 public void setOutputFileName(String outputFileName)	{ this.outputFileName = outputFileName;	}
 
-public void	setSourceDoc(PDDocument doc)				{ srcDoc = doc;	}
+/******************
+	Source documents
+*******************
 
-public void setSourceFileName(String filename) /*throws IOException, COSLoadException*/
+Methods to manage source documents. */
+
+protected PDDocument openSrcDoc(String fileName)
 {
-	inputFileName	= filename;
-
-	if (srcDoc != null)
-	{
-		try {
-			srcDoc.close();
-			srcDoc = null;
-		}
-		catch (IOException e) {
-			System.err.println("Error closing document from file : " + srcDoc.getLocator().getFullName());
-			System.exit(1);
-		}
-	}
-	FileLocator	locator	= new FileLocator(filename);
+	FileLocator	locator	= new FileLocator(fileName);
+	PDDocument	doc;
 	try {
-		srcDoc = PDDocument.createFromLocator(locator);
+		doc = PDDocument.createFromLocator(locator);
 	}
 	catch (IOException e) {
-		System.err.println("Error opening file : " + filename);
-		System.exit(1);
+		System.err.println("Error opening file : " + fileName);
+		return null;
 	}
 	catch (COSLoadException e) {
-			System.err.println("Error parsing file : " + filename);
-			System.exit(1);
+			System.err.println("Error parsing file : " + fileName);
+			return null;
 	}
+	return doc;
+}
+
+protected boolean closeSrcDoc(PDDocument doc)
+{
+	if (doc == null)
+		return true;
+	try {
+		doc.close();
+		doc = null;
+	}
+	catch (IOException e) {
+		System.err.println("Error closing document from file " + doc.getLocator().getFullName()
+				+ ": " + e.getMessage());
+		return false;
+	}
+	return true;
 }
 
 /******************
@@ -337,7 +531,6 @@ public void setSourceFileName(String filename) /*throws IOException, COSLoadExce
 *******************
 
 Creates a copy of single page, typically for a fold-out. */
-
 
 protected boolean createSinglePage(PDPage currSrcPage, int gluePageNo, ArrayList<PDPage> singlePages,
 		HashMap<COSIndirectObject, COSCompositeObject> resMap)
@@ -347,20 +540,29 @@ protected boolean createSinglePage(PDPage currSrcPage, int gluePageNo, ArrayList
 	CSCreator		destCreator	= CSCreator.createFromContent(destContent, currSrcPage);
 	CDSRectangle	box = currSrcPage.getMediaBox().copy().normalize();
 	destPage.setMediaBox(box);
-	destCreator.copy(currSrcPage.getContentStream());
 
+	// add side page no., if supplied
 	if (gluePageNo > 0)
 	{
-		PDFont font = PDFontType1.createNew(PDFontType1.FONT_Courier);
-		font.setEncoding(WinAnsiEncoding.UNIQUE);
-		destCreator.textSetFont(null, font, 6);
-		destCreator.textSetTransform(0, 1, -1, 0, 0, 0);	// 90° counter-clockwise rotation
-		// place at 1/6" from margin, mid-height
+		if (impoFont == null)
+		{
+			impoFont		= PDFontType1.createNew(PDFontType1.FONT_Courier);
+			impoFont.setEncoding(WinAnsiEncoding.UNIQUE);
+			impoFontName	= COSName.create("jPDFAnno");
+		}
+		COSObject	fontCopy	= impoFont.cosGetObject().copyDeep(resMap);
+		PDFont		font		= (PDFont)PDFont.META.createFromCos(fontCopy);
+		destCreator.textSetFont(impoFontName, font, (float)6.0);
+		// place vertically at 1/6" from margin, mid-height
 		// if gluing to odd page, place at left margin; if even, place at right margin
-		destCreator.textLineMoveTo( (gluePageNo & 1) == 1 ? 12 : box.getWidth()-12, box.getHeight()/2);
-		destCreator.textShow("p. " + (gluePageNo + pageNoOffset + 1));
+		destCreator.textSetTransform(0, 1, -1, 0,				// 90° counter-clockwise rotation
+				(gluePageNo & 1) == 1 ? 12 : box.getWidth()-6,	// X translation
+				box.getHeight()/2);								// Y translation
+		destCreator.textShow("p. " + (gluePageNo + srcStatus.pageNoOffset() + 1));
+		destCreator.flush();
 	}
 
+	destCreator.copy(currSrcPage.getContentStream());
 	destCreator.close();
 	// add content to dest. page
 	COSStream pageStream = destContent.createStream();
@@ -447,7 +649,7 @@ Create a dest. document with the same type and version of the source document.
 Only the "PDF" document type is supported; other types trigger application abort.
 Only PDF versions up to "1.7" are supported; greater PDF versions are downgraded to 1.7 with a warning. */
 
-protected boolean createDestDocument()
+protected boolean createDestDocument(PDDocument srcDoc)
 {
 	// retrieve and check source document type and version
 	STDocType docType = srcDoc.cosGetDoc().stGetDoc().getDocType();
@@ -486,10 +688,13 @@ Returns:	true = success | false = unrecoverable failure */
 
 public boolean readParamFile(String fileName)
 {
+	boolean			inFile			= false;
+	boolean			inputFileSeen	= false;
+	int				pageNoOffset	= 0;
 	FileInputStream	paramStream;
-	File			paramFile	= new File(fileName);
-	String			filePath	= paramFile.getAbsoluteFile().getParent();
-	boolean			inFile		= false;
+
+	File			paramFile		= new File(fileName);
+	String			filePath		= paramFile.getAbsoluteFile().getParent();
 
 	try {
 		paramStream = new FileInputStream(paramFile);
@@ -528,9 +733,16 @@ public boolean readParamFile(String fileName)
 					break;
 				case "input":
 				{
+					if (!inputFileSeen)			// if this is the first input file
+					{
+						srcStatus.init();		// reset source status to get rid of any CL source parameters
+						inputFileSeen = true;
+					}
 					File file = new File(val);
 					String fullFilePath = file.isAbsolute() ? val : filePath + File.separator + val;
-					setSourceFileName(fullFilePath);
+					JPDISourceDoc doc = srcStatus.addSrcDoc(fullFilePath);
+					if (doc == null)
+						return false;
 					break;
 				}
 				case "output":
@@ -560,6 +772,7 @@ public boolean readParamFile(String fileName)
 					break;
 				case "pagenooffset":
 					pageNoOffset = getIntParam(val, elementName, 0);
+					srcStatus.setPageNoOffset(pageNoOffset);
 					break;
 				case "foldout":
 					if (format != JPDImposition.Format.booklet)

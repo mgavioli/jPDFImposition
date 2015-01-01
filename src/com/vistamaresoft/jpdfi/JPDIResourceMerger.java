@@ -11,16 +11,16 @@ package com.vistamaresoft.jpdfi;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
+//import java.util.Observable;
+//import java.util.Observer;
 
 import de.intarsys.pdf.content.CSContent;
 import de.intarsys.pdf.content.CSOperation;
 import de.intarsys.pdf.cos.COSArray;
 import de.intarsys.pdf.cos.COSCompositeObject;
 import de.intarsys.pdf.cos.COSDictionary;
-//import de.intarsys.pdf.cos.COSDocumentElement;
 import de.intarsys.pdf.cos.COSName;
 import de.intarsys.pdf.cos.COSObject;
-import de.intarsys.pdf.pd.PDDocument;
 import de.intarsys.pdf.pd.PDPage;
 import de.intarsys.pdf.pd.PDResources;
 
@@ -28,24 +28,48 @@ import de.intarsys.pdf.pd.PDResources;
 	CLASS JPDImposition
 *******************/
 
-public class JPDIResourceMerger
+// TODO : implement JPDIResourceManager as an Observer to observe JPDISourceStatus, in order
+//	to be notified when source document changes to invalidate cached objects in page maps.
+
+public class JPDIResourceMerger /*implements Observer*/
 {
-protected PDDocument					destDoc;
-protected HashMap<COSObject, COSName>	docMap;
+// FIELDS
 protected int							uniqueId;
-protected HashMap<COSObject, COSName>[]	pageMap;
-protected COSDictionary[]				pageRes;
+protected HashMap<COSObject, COSName>[]	pageMap;	// map of resources used in each destination page
+protected COSDictionary[]				pageRes;	// dictionary of resources for each destination page
 
 /******************
 	C'tor
 *******************/
 
-public JPDIResourceMerger(PDDocument destDoc, int numOfDestPages)
+public JPDIResourceMerger(int numOfDestPages)
 {
-	this.destDoc	= destDoc;
-	docMap			= new HashMap<COSObject, COSName>();
 	uniqueId		= 1;
 	setNumOfDestPages(numOfDestPages);
+}
+
+/******************
+	Set the number of destination pages
+******************
+
+Sets the number of destination pages, releasing any existing page data and creating new structures for
+new pages.
+
+Parameters:	numOfDestPage:	the new number of destination pages
+Returns:	true = success | false = failure */
+
+@SuppressWarnings("unchecked")
+public boolean setNumOfDestPages(int numOfDestPages)
+{
+	releaseDestPages();
+	pageMap			= (HashMap<COSObject, COSName>[])new HashMap[numOfDestPages];
+	pageRes			= new COSDictionary[numOfDestPages];
+	for (int i = 0; i < numOfDestPages; i++)
+	{
+		pageMap[i]	= new HashMap<COSObject, COSName>();
+		pageRes[i]	= PDResources.META.createNew().cosGetDict();
+	}
+	return true;
 }
 
 /******************
@@ -71,30 +95,6 @@ public void releaseDestPages()
 			pageRes[i] = null;
 		pageRes = null;
 	}
-}
-
-/******************
-	Set the number of destination pages
-******************
-
-Sets the number of destination pages, releasing any existing page data and creating new structures for
-new pages.
-
-Parameters:	numOfDestPage:	the new number of destination pages
-Returns:	true = success | false failure */
-
-@SuppressWarnings("unchecked")
-public boolean setNumOfDestPages(int numOfDestPages)
-{
-	releaseDestPages();
-	pageMap			= (HashMap<COSObject, COSName>[])new HashMap[numOfDestPages];
-	pageRes			= new COSDictionary[numOfDestPages];
-	for (int i = 0; i < numOfDestPages; i++)
-	{
-		pageMap[i]	= new HashMap<COSObject, COSName>();
-		pageRes[i]	= PDResources.META.createNew().cosGetDict();
-	}
-	return true;
 }
 
 /******************
@@ -236,8 +236,9 @@ public final COSDictionary getResources(int destPageIdx)
 {
 	return pageRes[destPageIdx];
 }
+
 /******************
-	RENAME PAGE CONTENTS
+	Rename page contents
 ******************
 
 Scans the given page contents and renames all the operand COSName's in renameList.
@@ -284,4 +285,21 @@ protected String uniqueNameString()
 	return new String("JPDI" + uniqueId++);
 }
 
+/******************
+	UPDATE
+******************
+
+Called when the source document changes. Invalidate (but do not delete) all the current contents of page maps.
+
+Parameters:	who:	the Observable sending the event
+			what:	the actual event
+Returns:	none */
+/*
+public void update(Observable who, Object what)
+{
+	for (int i = 0; i < pageMap.length; i++)
+		for (COSObject obj : pageMap[i].keySet())
+			obj = null;
+}
+*/
 }

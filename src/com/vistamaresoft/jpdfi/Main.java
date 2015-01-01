@@ -42,7 +42,7 @@ public class Main
 		if (paramList != null)
 			if (!outDoc.readParamFile(paramList))
 				System.exit(1);
-		System.out.println(outDoc.getInputFileName() + " => " + outDoc.getOutputFileName() + "\n");
+		System.out.println(outDoc.getInputFileNames() + " => " + outDoc.getOutputFileName() + "\n");
 		if (outDoc.impose())
 			outDoc.save();
 	}

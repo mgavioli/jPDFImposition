@@ -31,7 +31,8 @@ public enum Format
 	in8v	(3),	// in 8° format, first fold is vertical
 	in16h	(4),	// in 16° format, first fold is horizontal
 	in16v	(5),	// in 16° format, first fold is vertical
-	booklet	(6);	// booklet format (multiple sheets bounded together)
+	booklet	(6),	// booklet format (multiple sheets bounded together)
+	none	(7);	// no imposition, used for verbatim merge
 
 	private final int formatCode;
 	Format(int formatCode)	{ this.formatCode = formatCode;	}
@@ -101,6 +102,8 @@ public int 		numOfCols()
 {
 	switch (format)
 	{
+	case none:
+		return 1;
 	case in8h:
 	case in8v:
 	case in16h:
@@ -144,7 +147,7 @@ public void setFormat(Format formalVal, int maxSheetsPerSignVal, int numOfPages,
 private void applyFormat(TreeSet<Integer>foldOutList) throws CloneNotSupportedException
 {
 	int		docPageNo	= 0;				// the current document page no. (0-based)
-	formatSetup(foldOutList.size());
+	formatSetup(foldOutList);
 
 	// initialize pageImpoData for each page of each signature according to format
 	int		currSignNo = 0;
@@ -185,9 +188,9 @@ private void applyFormat(TreeSet<Integer>foldOutList) throws CloneNotSupportedEx
 				// locate its two pages and move them out of sequence
 				if (nextPageOffset == -1)
 				{
-					signImpoData.get(currArrSize-3).destPage	= OUT_OF_SEQUENCE_PAGE;
-					signImpoData.get(currArrSize-3).row			= docPageNo - 1;	// glue to pid1
-					signImpoData.get(currArrSize-4).destPage	= OUT_OF_SEQUENCE_PAGE;
+					signImpoData.get(pid1.destPage).destPage	= OUT_OF_SEQUENCE_PAGE;
+					signImpoData.get(pid1.destPage).row			= docPageNo - 1;	// glue to pid1
+					signImpoData.get(pid1.destPage-1).destPage	= OUT_OF_SEQUENCE_PAGE;
 				}
 //				currPageNo++;		// NO: fold-out pages do not count for imposition
 				docPageNo++;
@@ -270,7 +273,7 @@ private void applyFormat(TreeSet<Integer>foldOutList) throws CloneNotSupportedEx
 
 Sets arrays up for application of imposition. */
 
-private void formatSetup(int numOfFoldOuts)
+private void formatSetup(TreeSet<Integer>foldOutList)
 {
 	int		numOfCols, numOfRows;
 
@@ -279,8 +282,12 @@ private void formatSetup(int numOfFoldOuts)
 	numOfRows = numOfRows();
 	// compute some helper values
 	int	pagesPerSheet	= numOfCols * numOfRows * 2;
+	int	numOfSheetPages	= totPages;
 	// if booklet, exclude fold-out pages from pages usable for sheets
-	int	numOfSheetPages	= totPages - (format == Format.booklet ? numOfFoldOuts*2 : 0);
+	if (format == Format.booklet)
+		for (Integer foldOut : foldOutList)
+			if (foldOut < totPages)
+				numOfSheetPages -= 2;
 	// round up number of sheets and number of signatures
 	int	numOfSheets		= (numOfSheetPages + pagesPerSheet-1) / pagesPerSheet;
 	int	numOfSigns		= (numOfSheets + maxSheetsPerSign-1) / maxSheetsPerSign;
@@ -380,6 +387,8 @@ public static String formatValToString(Format format)
 		return "in16h";
 	case in16v:
 		return "in16v";
+	case none:
+		return "none";
 	default:				// any other string defaults to "booklet"
 		return "booklet";
 	}
@@ -400,6 +409,8 @@ public static Format formatStringToVal(String format)
 		return Format.in16h;
 	else if (format.equals("in16v"))
 		return Format.in16v;
+	else if (format.equals("none"))
+		return Format.none;
 	return Format.booklet;
 }
 }
