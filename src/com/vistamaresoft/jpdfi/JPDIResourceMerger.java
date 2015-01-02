@@ -98,7 +98,7 @@ public void releaseDestPages()
 }
 
 /******************
-	Merge a source page into a destination page
+	Merge resources of a source page into a destination page
 ******************
 
 Parameters:	destPageIdx:	the index of the destination page to merge into

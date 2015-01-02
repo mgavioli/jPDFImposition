@@ -66,7 +66,7 @@ private class JPDISourceDoc
 	String	fileName;							// the document file name (hopefully as an absolute path)
 //	int		fromPage, toPage;					// this document is used from page fromPage to page toPage
 	int		numOfPages;							// number of pages this document will provide
-	int		pageNoOffset;						// the offset from page sequence index to page number
+	int		pageNoOffset;						// the offset from page number to page sequence index
 	PDDocument	doc;							// the document itself
 }
 
@@ -124,17 +124,17 @@ private class JPDISourceStatus
 		return currPage;
 	}
 
-	public int pageNoOffset()
+	public int pageNoOffset(int pageNo)
 	{
-		if (srcDocs != null || srcDocs.size() > 0)
-			return srcDocs.get(srcDocs.size()-1).pageNoOffset;
+		if (srcDocs == null || srcDocs.size() == 0)
+			return 0;
+		for (JPDISourceDoc doc : srcDocs)
+		{
+			if (pageNo < doc.numOfPages)
+				return doc.pageNoOffset;
+			pageNo -= doc.numOfPages;
+		}
 		return 0;
-	}
-
-	public void setPageNoOffset(int pageNoOffset)
-	{
-		if (srcDocs != null || srcDocs.size() > 0)
-			srcDocs.get(srcDocs.size()-1).pageNoOffset = pageNoOffset;
 	}
 
 	public int totPages()
@@ -236,7 +236,7 @@ Fills the document with data from sourceDoc according to impo. */
 public boolean impose()
 {
 	if (format == JPDImposition.Format.none)
-		return merge();
+		return concatenate();
 
 	PDPage	currSrcPage	= srcStatus.nextPage();
 	if (currSrcPage == null)
@@ -384,12 +384,12 @@ public boolean impose()
 }
 
 /******************
-	MERGE
+	CONCATENATE
 *******************
-Merges source documents into destination document.
+Concatenates several source documents into a destination document.
 A special case of impose() when imposition format is Format.none */
 
-public boolean merge()
+public boolean concatenate()
 {
 	PDPage		currSrcPage	= srcStatus.nextPage();
 	if (currSrcPage == null)
@@ -432,6 +432,7 @@ public boolean merge()
 	}
 	return true;
 }
+
 /******************
 	Save the destination document
 *******************/
@@ -558,7 +559,8 @@ protected boolean createSinglePage(PDPage currSrcPage, int gluePageNo, ArrayList
 		destCreator.textSetTransform(0, 1, -1, 0,				// 90° counter-clockwise rotation
 				(gluePageNo & 1) == 1 ? 12 : box.getWidth()-6,	// X translation
 				box.getHeight()/2);								// Y translation
-		destCreator.textShow("p. " + (gluePageNo + srcStatus.pageNoOffset() + 1));
+		// convert physical page no. to printed page no. and then from 0-based to 1-based
+		destCreator.textShow("p. " + (gluePageNo - srcStatus.pageNoOffset(gluePageNo) + 1));
 		destCreator.flush();
 	}
 
@@ -725,8 +727,13 @@ public boolean readParamFile(String fileName)
 					System.err.println("Parameter file " + fileName + " does not seem a jPDFImposition file");
 					return false;
 				}
-				String	val			= reader.getAttributeValue(0);
 				String	elementName	= reader.getLocalName();
+				String	val			= reader.getAttributeValue(null, "value");
+				if (val == null)
+				{
+					System.err.println("Missing \"value\" attribute in " + elementName + " tag. Aborting.");
+					return false;
+				}
 				switch(elementName.toLowerCase())
 				{
 				case "jpdfimposition":
@@ -741,8 +748,18 @@ public boolean readParamFile(String fileName)
 					File file = new File(val);
 					String fullFilePath = file.isAbsolute() ? val : filePath + File.separator + val;
 					JPDISourceDoc doc = srcStatus.addSrcDoc(fullFilePath);
+					val = reader.getAttributeValue(null, "pageNoOffset");
+					if (val != null)
+					{
+						try {
+							pageNoOffset = Integer.parseInt(val);
+						} catch (NumberFormatException e) {
+							;		// do nothing keeping the current value
+						}
+					}
 					if (doc == null)
 						return false;
+					doc.pageNoOffset = pageNoOffset;
 					break;
 				}
 				case "output":
@@ -770,10 +787,6 @@ public boolean readParamFile(String fileName)
 				case "frontoffsety":
 					pageOffsetY[FRONT_PAGE] = getDoubleParam(val, elementName, 0.0) * MM2PDF;
 					break;
-				case "pagenooffset":
-					pageNoOffset = getIntParam(val, elementName, 0);
-					srcStatus.setPageNoOffset(pageNoOffset);
-					break;
 				case "foldout":
 					if (format != JPDImposition.Format.booklet)
 					{
@@ -781,12 +794,13 @@ public boolean readParamFile(String fileName)
 						break;
 					}
 					intVal = getIntParam(val, elementName, -1);
-					// round down to nearest even number and then convert from 1-based to 0-based
-					intVal = ( (intVal - pageNoOffset) & 0xFFFE) - 1;
+					// convert to physical page no., round down to nearest even number
+					// and then convert from 1-based to 0-based
+					intVal = ( (intVal + pageNoOffset) & 0xFFFE) - 1;
 					foldOutList.add(intVal);
 					break;
 				default:
-					System.err.println("Unknown parameter '" + val + "' in parameter file " + fileName);
+					System.err.println("Unknown parameter '" + elementName + "' in parameter file " + fileName);
 				}
 				break;
 /*

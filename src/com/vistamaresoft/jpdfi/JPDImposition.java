@@ -32,7 +32,7 @@ public enum Format
 	in16h	(4),	// in 16° format, first fold is horizontal
 	in16v	(5),	// in 16° format, first fold is vertical
 	booklet	(6),	// booklet format (multiple sheets bounded together)
-	none	(7);	// no imposition, used for verbatim merge
+	none	(7);	// no imposition, used for verbatim concatenation
 
 	private final int formatCode;
 	Format(int formatCode)	{ this.formatCode = formatCode;	}
