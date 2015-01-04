@@ -92,6 +92,7 @@ private static final int[][] prebuiltColData =
 // FIELDS
 
 private Format	format				= Format.booklet;
+private int		formatSubParam		= 0;
 private int		maxSheetsPerSign	= DEFAULT_SHEETS_PER_SIGN;	// max num. of sheets per signature
 // for each source page of each signature, define where and how to place it into the destination
 private ArrayList<ArrayList<JPDIPageImpoData>>	pageImpoData;
@@ -110,7 +111,7 @@ public JPDImposition()
 	Getters / Setters
 *******************/
 
-public Format	format()			{ return format;				}
+public Format	format()			{ return format;	}
 public int 		numOfCols()
 {
 	switch (format)
@@ -144,12 +145,14 @@ public int numOfRows()
 }
 public int maxSheetsPerSignature()				{ return maxSheetsPerSign;	}
 
-public void setFormat(Format formalVal, int maxSheetsPerSignVal, int numOfPages, TreeSet<Integer>foldOutList)
+public void setFormat(Format format, int formatSubParam, int maxSheetsPerSign,
+		int numOfPages, TreeSet<Integer>foldOutList)
 		throws CloneNotSupportedException
 {
-	format				= formalVal;
-	maxSheetsPerSign	= maxSheetsPerSignVal;
-	totPages			= numOfPages;
+	this.format				= format;
+	this.formatSubParam		= formatSubParam;
+	this.maxSheetsPerSign	= maxSheetsPerSign;
+	totPages				= numOfPages;
 	if (format != Format.booklet)
 		maxSheetsPerSign = 1;
 	if (maxSheetsPerSign < 1)
@@ -232,13 +235,14 @@ private void applyFormat(TreeSet<Integer>foldOutList) throws CloneNotSupportedEx
 			}
 
 			// DESTINATION PAGE
-			pid.destPage = (sheetsPerSign[currSignNo] == 1) ?
-					// if 1 sheet x sign. (any non-booklet or in-folio booklet):
+			pid.destPage = (format == Format.booklet) ?
+					// dest. page first increases then decreases
+					Math.min (currPageNo+formatSubParam, numOfSrcPages-1 - currPageNo-formatSubParam)
+					// 1 sheet x sign. (any non-booklet):
 					//	dest. page either 0 or 1, according to pagenum / 2 is even or odd
-					((currPageNo+1) / 2) & 0x0001
-					// several sheets x sign. (booklet):
-					//	dest. page first increases then decreases
-					: Math.min (currPageNo, numOfSrcPages-1 - currPageNo);
+					: ((currPageNo+1) / 2) & 0x0001;
+			if (pid.destPage < 0)		// may happen with booklet + -1 shift, in which page 0
+				pid.destPage = 0;		// ends up in destPage -1, but it should be 0
 			// DESTINATION ROW
 			pid.row = (format == Format.booklet) ?
 					// if 1 row x sheet: row always = 0
@@ -250,7 +254,7 @@ private void applyFormat(TreeSet<Integer>foldOutList) throws CloneNotSupportedEx
 			// DESTINATION COLUMN
 			pid.col = (format == Format.booklet) ?
 					// column alternates 1 & 0
-					1 - (currPageNo & 1)
+					1 - (currPageNo+formatSubParam & 1)
 					// single sheets per sign.: use pre-built data
 					: prebuiltColData[format.code()][currPageNo];
 

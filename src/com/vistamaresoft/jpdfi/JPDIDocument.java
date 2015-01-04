@@ -172,8 +172,8 @@ private class JPDISourceStatus
 		PDPageTree	pageTree 	= doc.getPageTree();
 		int			numOfPages	= pageTree.getCount();
 		// TODO : make JPDISourceStatus an Observable by JPDIResourceManager
-		// so that the latter can flush the page maps when source document changes
-		// for the moment being, just keep all source documents always open,
+		// so that the latter can flush the page maps when source document changes.
+		// For the moment being, just keep all source documents always open,
 		// in order to have all objects of all documents always valid
 //		if (!closeSrcDoc(doc))
 //			return null;
@@ -195,6 +195,7 @@ private class JPDISourceStatus
 private PDDocument				dstDoc;
 private TreeSet<Integer>		foldOutList;
 private JPDImposition.Format	format;
+private int						formatSubParam;
 private JPDImposition			impo;
 private PDFont					impoFont;
 private COSName					impoFontName;
@@ -204,6 +205,8 @@ private double					pageOffsetX[]	= { 0.0, 0.0 };
 private double					pageOffsetY[]	= { 0.0, 0.0 };
 private JPDISourceStatus		srcStatus;
 
+// Turn the use of JDPIResourceManager on instead of an older way of merging
+// which had proven unreliable and will be removed. Leave on 'true'.
 public static final boolean		useMerger		= true;
 
 /******************
@@ -263,7 +266,7 @@ public boolean impose()
 	JPDIResourceMerger	merger 		= null;
 	ArrayList<PDPage>	singlePages	= new ArrayList<PDPage>();
 	try {
-		impo.setFormat(format, maxSheetsPerSign, srcStatus.totPages(), foldOutList);
+		impo.setFormat(format, formatSubParam, maxSheetsPerSign, srcStatus.totPages(), foldOutList);
 	} catch (CloneNotSupportedException e) {
 		System.err.println("Error while processing the format: " + e.getMessage());
 		e.printStackTrace();
@@ -475,9 +478,9 @@ protected boolean save() /*throws IOException*/
 
 public JPDImposition.Format	format()	{ return impo.format();					}
 
-public String getInputFileNames()		{ return srcStatus.inputFileNames();	}
+public String inputFileNames()			{ return srcStatus.inputFileNames();	}
 
-public String getOutputFileName()		{ return outputFileName;				}
+public String outputFileName()			{ return outputFileName;				}
 
 /******************
 	Setters
@@ -562,7 +565,7 @@ protected boolean createSinglePage(PDPage currSrcPage, int gluePageNo, ArrayList
 		{
 			impoFont		= PDFontType1.createNew(PDFontType1.FONT_Courier);
 			impoFont.setEncoding(WinAnsiEncoding.UNIQUE);
-			impoFontName	= COSName.create("jPDFAnno");
+			impoFontName	= COSName.create("jPDFMark");
 		}
 		COSObject	fontCopy	= impoFont.cosGetObject().copyDeep(resMap);
 		PDFont		font		= (PDFont)PDFont.META.createFromCos(fontCopy);
@@ -782,8 +785,21 @@ public boolean readParamFile(String fileName)
 					break;
 				}
 				case "format":
+				{
 					format = JPDImposition.formatStringToVal(val);
+					formatSubParam = 0;
+					if (format == JPDImposition.Format.booklet)
+					{
+						val = reader.getAttributeValue(null, "firstPageAsEven");
+						if (val != null)
+						{
+							val = val.toLowerCase();
+							if (val.equalsIgnoreCase("yes") || val.equals("true") || val.equals("1"))
+								formatSubParam = -1;
+						}
+					}
 					break;
+				}
 				case "sheetspersign":
 					maxSheetsPerSign = getIntParam(val, elementName, 
 							JPDImposition.DEFAULT_SHEETS_PER_SIGN);
