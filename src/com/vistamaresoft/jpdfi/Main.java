@@ -30,30 +30,33 @@ import java.util.HashMap;
 
 public class Main
 {
+	public static final String		version	= "0.4.0";
+
 	// CLI
-	private static final int		MAX_PARAMS	= 2;
-	static int						numOfParams	= 0;
-	static String[]					params		= { null, null};
 	static HashMap<String, String>	options;
 	static String					wrongOption = "";
 
-	public static void main(String[] args) throws Exception
+	public static void main(String[] args) //throws Exception
 	{
 		boolean parsed = parseCL(args);
 		if (!wrongOption.isEmpty())
 			System.err.println("Unknown option '" + wrongOption + ".\n");
 		if (!wrongOption.isEmpty() || !parsed)
 			usage();
-
-		JPDIDocument	outDoc		= new JPDIDocument(params[0]);
-		String			paramList	= options.get("l");
-		String			format		= options.get("f");
-		if (format != null)
-			outDoc.setFormat(format, options.get("s"));
-		if (params[1] != null)
-			outDoc.setOutputFileName(params[1]);
-		if (paramList != null)
-			if (!outDoc.readParamFile(paramList))
+		
+		JPDIDocument	outDoc	= new JPDIDocument();
+		// set provided options into the document
+		if (options.get("i") != null)
+			outDoc.addSourceFileName(options.get("i"));
+		if (options.get("o") != null)
+			outDoc.setOutputFileName(options.get("o"));
+		if (options.get("f") != null)
+			outDoc.setFormat(options.get("f"), options.get("s"));
+		else if (options.get("s") != null)
+			outDoc.setMaxSheetsPerSign(options.get("s"));
+		// leave -l as last, to overwrite any CLI option
+		if (options.get("l") != null)
+			if (!outDoc.readParamFile(options.get("l")))
 				System.exit(1);
 		System.out.println(outDoc.inputFileNames() + " => " + outDoc.outputFileName() + "\n");
 		if (outDoc.impose())
@@ -66,7 +69,7 @@ public class Main
 
 	protected static boolean parseCL(String[] args)
 	{
-		final String	acceptedOptions = "fls";
+		final String	acceptedOptions = "fhliosv";
 		boolean			isOption	= false;				// true when expecting a string for an option
 		char			lastOption	= '\0';
 		options = new HashMap<String, String>();
@@ -78,16 +81,8 @@ public class Main
 				// real parameters (rather than an option value string)
 				if (!isOption)
 				{
-					if (numOfParams < MAX_PARAMS)
-					{
-						params[numOfParams] = arg;
-						numOfParams++;
-					}
-					else
-					{
-						System.err.println("Too many parameters.");
-						return false;
-					}
+					System.err.println("Option missing for parameter \"" + arg + "\".");
+					return false;
 				}
 				else
 				{
@@ -104,11 +99,23 @@ public class Main
 					wrongOption = arg;
 					return false;
 				}
-				// has an attached value (not separated by a space)
-				if (arg.length() > 2)			// if value is directly attached to option char
-					options.put(Character.toString(lastOption), arg.substring(2));
-				else
-					isOption = true;			// expect an option value as next string
+				// locally managed options:
+				switch (lastOption)
+				{
+				case 'h':
+					usage();
+					break;
+				case 'v':
+					version();
+					break;
+				default:
+					// has an attached value (not separated by a space)
+					if (arg.length() > 2)			// if value is directly attached to option char
+						options.put(Character.toString(lastOption), arg.substring(2));
+					else
+						isOption = true;			// expect an option value as next string
+					break;
+				}
 			}
 		}
 		return true;
@@ -120,6 +127,21 @@ public class Main
 
 	public static void usage()
 	{
-		System.out.println("usage: java[.exe] jPDFi [options] <input-pdf> <output-pdf>\nWhere options can be:\n-f format\the imposition format\n-s sheetsPerSignature\t the max no. of sheets a signature may have\n-l filename\t an XML parameter file with additional parameters\n\n");
+		version();
+		System.out.println("usage: java[.exe] jPDFImposition [options]\n" +
+				"Where options can be:\n-f format\the imposition format\n" +
+				"-s sheetsPerSignature\tthe max no. of sheets a signature may have\n" +
+				"-l filename\tan XML parameter file with additional parameters\n" +
+				"-i filename\tthe input PDF file name\n" +
+				"-o filename\tthe output PDF file name\n");
+	}
+	/******************
+		Usage
+	*******************/
+
+	public static void version()
+	{
+		System.out.println("jPDFImposition " + version + "\n" +
+			"(C) Copyright 2015, Maurizio M. Gavioli");
 	}
 }

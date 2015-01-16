@@ -1,7 +1,7 @@
 /****************************
 	j P D F i  -  A Java application to apply an imposition to a PDF document.
 
-	JPDIDocument.java - Sub-class of PDDocument, for creating an imposed document from an original PDDocument
+	JPDIDocument.java - Creates an imposed PDFt from source PDF's
 
 	Created by : Maurizio M. Gavioli 2014-12-17
 
@@ -28,6 +28,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
+//import java.util.Observable;
 import java.util.TreeSet;
 
 import javax.xml.stream.XMLInputFactory;
@@ -64,41 +65,68 @@ import de.intarsys.tools.locator.FileLocator;
 	CLASS JPDIDocument
 *******************/
 
-public class JPDIDocument extends Object
+public class JPDIDocument /*extends Object*/
 {
 // PRIVATE DEFINITIONS
 
 private static final int		FRONT_PAGE		= 0;			// for indices into pageOffsetX/Y
 private static final int		BACK_PAGE		= 1;
 private static final double		MM2PDF			= 72 / 25.4;	// to convert mm to PDF default units (1/72 inch)
+private static final int		INVALID_PARAM	= -1000000;		// used as rejected parameter value
+//Turn the use of JDPIResourceManager on instead of an older way of merging
+//which had proven unreliable and will be removed. Leave on 'true'.
+public static final boolean		useMerger		= true;
+public static final boolean		dontOpenAllDocs	= false;
 
 // Data about a source document
 
 private class JPDISourceDoc
 {
-	String	fileName;							// the document file name (hopefully as an absolute path)
-//	int		fromPage, toPage;					// this document is used from page fromPage to page toPage
-	int		numOfPages;							// number of pages this document will provide
-	int		pageNoOffset;						// the offset from page number to page sequence index
-	PDDocument	doc;							// the document itself
+			String		fileName;			// the document file name (hopefully as an absolute path)
+	private	int			fromPage, toPage;	// this document is used from page fromPage to page toPage
+	private	int			numOfPages;			// number of pages this document will provide
+	private	int			pageNoOffset;		// the offset from page number to page sequence index
+			PDDocument	doc;				// the document itself
+/*
+	public int	fromPage()		{ return fromPage;		}
+	public int	numOfPages()	{ return numOfPages;	}
+	public int	pageNoOffset()	{ return pageNoOffset;	}
+	public int	toPage()		{ return toPage;		}
+*/
+	public void	setFromPage(int val)
+	{
+		int newVal	= val + pageNoOffset - 1;
+		int	delta	= newVal - fromPage;
+		fromPage	= newVal;
+		numOfPages	-= delta;
+	}
+	public void	setToPage(int val)
+	{
+		int newVal	= val + pageNoOffset - 1;
+		int	delta	= newVal - toPage;
+		toPage		= newVal;
+		numOfPages	+= delta;
+	}
 }
 
 // Data about the current source status
 
-private class JPDISourceStatus
+private class JPDISourceStatus /*extends Observable*/
 {
-	protected	int			currDocNo;		// the index of the current source document into the srcDocs array
-	protected	PDDocument	currDoc;		// the current source document
-	protected	PDPage		currPage;		// the current source page
-	protected	ArrayList<JPDISourceDoc>	srcDocs;		// the various source documents
+	private	PDDocument	currDoc;		// the current source document
+	private	int			currDocNo;		// the index of the current source document into the srcDocs array
+	private int			currDocPageNo;	// the no. (0-based) of the current page in the current document 
+	private	PDPage		currPage;		// the current source page
+	private	ArrayList<JPDISourceDoc>	srcDocs;		// the various source documents
 
 	public void init()
 	{
-		currDocNo	= -1;					// before first document
-		currDoc		= null;
-		currPage	= null;
+		currDocNo		= -1;			// before first document
+		currDocPageNo	= -1;			// before first page
+		currDoc			= null;
+		currPage		= null;
 		if (srcDocs == null)
-			srcDocs	= new ArrayList<JPDISourceDoc>();
+			srcDocs		= new ArrayList<JPDISourceDoc>();
 		else
 			srcDocs.clear();
 	}
@@ -119,20 +147,35 @@ private class JPDISourceStatus
 
 	public PDPage nextPage()
 	{
+		// if within some document and we reached its end, discard current page
+		if (currDocNo >= 0 && currDocPageNo >= srcDocs.get(currDocNo).toPage)
+			currPage = null;
+		// if we have a current page, get the next
 		if (currPage != null)
 			currPage = currPage.getNextPage();
+		// if no current page (either no doc at all or current doc ended or its toPage was reached)
 		if (currPage == null)
+			// get next doc, if any
 			if (srcDocs != null && currDocNo < srcDocs.size()-1)
 			{
-//				closeSrcDoc(currDoc);
+if (dontOpenAllDocs)
+	closeSrcDoc(currDoc);
 				currDocNo++;
-//				currDoc = openSrcDoc(srcDocs.get(currDocNo).fileName);
-				currDoc = srcDocs.get(currDocNo).doc;
+				JPDISourceDoc	srcDoc	= srcDocs.get(currDocNo);
+if (dontOpenAllDocs)
+	currDoc = openSrcDoc(srcDocs.get(currDocNo).fileName);
+else
+	currDoc = srcDoc.doc;
+//				setChanged();
 				if (currDoc != null)
 				{
 					PDPageTree	pageTree 	= currDoc.getPageTree();
 					currPage				= pageTree.getFirstPage();
+					if (srcDoc.fromPage > 0)
+						currPage = currPage.getPageAt(srcDoc.fromPage);
+					currDocPageNo			= srcDoc.fromPage;
 				}
+//				notifyObservers(JPDIMsgs.MSG_NEW_DOC);
 			}
 		return currPage;
 	}
@@ -171,17 +214,17 @@ private class JPDISourceStatus
 			return null;
 		PDPageTree	pageTree 	= doc.getPageTree();
 		int			numOfPages	= pageTree.getCount();
-		// TODO : make JPDISourceStatus an Observable by JPDIResourceManager
-		// so that the latter can flush the page maps when source document changes.
-		// For the moment being, just keep all source documents always open,
-		// in order to have all objects of all documents always valid
-//		if (!closeSrcDoc(doc))
-//			return null;
+if (dontOpenAllDocs)
+	if (!closeSrcDoc(doc))
+		return null;
 		// create a new JPDISourceDoc and add it to the list
 		JPDISourceDoc	srcDoc	= new JPDISourceDoc();
 		srcDoc.fileName			= fileName;
-		srcDoc.doc				= doc;
+if (!dontOpenAllDocs)
+	srcDoc.doc				= doc;
 		srcDoc.numOfPages		= numOfPages;
+		srcDoc.fromPage			= 0;
+		srcDoc.toPage			= numOfPages - 1;
 		// inherit page num. offset from previous document
 		if (srcDocs.size() > 0)
 			srcDoc.pageNoOffset	= srcDocs.get(srcDocs.size()-1).pageNoOffset;
@@ -203,11 +246,9 @@ private int						maxSheetsPerSign;
 private String					outputFileName;
 private double					pageOffsetX[]	= { 0.0, 0.0 };
 private double					pageOffsetY[]	= { 0.0, 0.0 };
+private double					pageSizeX		= 0.0;
+private double					pageSizeY		= 0.0;
 private JPDISourceStatus		srcStatus;
-
-// Turn the use of JDPIResourceManager on instead of an older way of merging
-// which had proven unreliable and will be removed. Leave on 'true'.
-public static final boolean		useMerger		= true;
 
 /******************
 	C'tors
@@ -280,15 +321,24 @@ public boolean impose()
 		int		numOfDestPages = impo.numOfDestPagesPerSignature(currSignNo);
 		if (useMerger)
 			if (merger == null)
+			{
 				merger = new JPDIResourceMerger(/*dstDoc,*/ numOfDestPages);
+//				srcStatus.addObserver(merger);
+			}
 			else
 				merger.setNumOfDestPages(numOfDestPages);
-		// get destination crop box from source page crop box
-		CDSRectangle box	= currSrcPage.getMediaBox().copy().normalize();
-		float srcPageHeight	= box.getHeight();
-		float srcPageWidth	= box.getWidth();
-		box.setHeight(srcPageHeight * impo.numOfRows());
-		box.setWidth (srcPageWidth  * impo.numOfCols());
+		// get destination media box from source page media box
+		CDSRectangle destBox	= currSrcPage.getMediaBox().copy().normalize();
+		// set dimensions, if given as parameters
+		if (pageSizeX > 0.0)
+			destBox.setWidth((float)pageSizeX);
+		if (pageSizeY > 0.0)
+			destBox.setHeight((float)pageSizeY);
+		float destPageHeight	= destBox.getHeight();
+		float destPageWidth		= destBox.getWidth();
+		// enlarge to forme sizes
+		destBox.setHeight(destPageHeight * impo.numOfRows());
+		destBox.setWidth (destPageWidth  * impo.numOfCols());
 
 		// create arrays to hold destination pages (and their appendages) for the whole signature
 		PDPage			destPage[]		= new PDPage[numOfDestPages];
@@ -300,7 +350,7 @@ public boolean impose()
 		for (int pageNo = 0; pageNo < numOfDestPages; pageNo++)
 		{
 			destPage[pageNo]	= (PDPage) PDPage.META.createNew();
-			destPage[pageNo].setMediaBox(box.copy());
+			destPage[pageNo].setMediaBox(destBox.copy());
 			destContent[pageNo]	= CSContent.createNew();
 			destCreator[pageNo]	= CSCreator.createFromContent(destContent[pageNo], currSrcPage);
 			destResDict[pageNo]	= PDResources.META.createNew().cosGetDict();
@@ -327,13 +377,14 @@ public boolean impose()
 
 			// set PAGE TRANSFORMATION into destination place
 
+			CDSRectangle srcBox	= currSrcPage.getMediaBox().copy().normalize();
 			double	rot		= impo.pageDestRotation(currSignPageNo, currSignNo) * Math.PI / 180.0;
 			double	cosRot	= Math.cos(rot);
 			double	sinRot	= Math.sin(rot);
-			double	offsetX	= impo.pageDestOffsetX(currSignPageNo, currSignNo, srcPageWidth)
-					+ pageOffsetX[destPageNo & 1];
-			double	offsetY	= impo.pageDestOffsetY(currSignPageNo, currSignNo, srcPageHeight)
-					+ pageOffsetY[destPageNo & 1];
+			double	offsetX	= impo.pageDestOffsetX(currSignPageNo, currSignNo, destPageWidth)
+					+ (destPageWidth - srcBox.getWidth()) * 0.5 + pageOffsetX[destPageNo & 1];
+			double	offsetY	= impo.pageDestOffsetY(currSignPageNo, currSignNo, destPageHeight)
+					+ (destPageHeight -srcBox.getHeight())* 0.5 + pageOffsetY[destPageNo & 1];
 			double	scaleX	= 1.0;
 			double	scaleY	= 1.0;
 			destCreator[destPageNo].saveState();
@@ -393,7 +444,7 @@ public boolean impose()
 	try {
 		srcDoc.close();
 	} catch (IOException e) {
-		// empty catch: if we cannot close it, just ingore it!
+		// empty catch: if we cannot close it, just ignore it!
 	}
 
 	return true;
@@ -486,13 +537,23 @@ public String outputFileName()			{ return outputFileName;				}
 	Setters
 *******************/
 
+public void addSourceFileName(String srcFileName)
+{
+	srcStatus.addSrcDoc(srcFileName);
+}
+
 public void setFormat(String formatStr, String sheetsPerSignStr)
 {
 	// normalize and save params for later
 	format	= JPDImposition.formatStringToVal(formatStr);
-	String maxSheetsPerSignStr = (sheetsPerSignStr != null) ? sheetsPerSignStr : formatStr;
+	if (sheetsPerSignStr != null)
+		setMaxSheetsPerSign(sheetsPerSignStr);
+}
+
+public void setMaxSheetsPerSign(String sheetsPerSignStr)
+{
 	try {
-		maxSheetsPerSign = Integer.parseInt(maxSheetsPerSignStr);
+		maxSheetsPerSign = Integer.parseInt(sheetsPerSignStr);
 	}
 	catch(NumberFormatException e) {
 		maxSheetsPerSign = 1;
@@ -764,18 +825,21 @@ public boolean readParamFile(String fileName)
 					File file = new File(val);
 					String fullFilePath = file.isAbsolute() ? val : filePath + File.separator + val;
 					JPDISourceDoc doc = srcStatus.addSrcDoc(fullFilePath);
-					val = reader.getAttributeValue(null, "pageNoOffset");
-					if (val != null)
-					{
-						try {
-							pageNoOffset = Integer.parseInt(val);
-						} catch (NumberFormatException e) {
-							;		// do nothing keeping the current value
-						}
-					}
 					if (doc == null)
 						return false;
+					// retrieve input attributes
+					intVal	= getIntAttribute(reader, elementName, "pageNoOffset");
+					if (intVal != INVALID_PARAM)
+						pageNoOffset = intVal;
 					doc.pageNoOffset = pageNoOffset;
+
+					intVal	= getIntAttribute(reader, elementName, "fromPage");
+					if (intVal != INVALID_PARAM)
+						doc.setFromPage(intVal);
+
+					intVal	= getIntAttribute(reader, elementName, "toPage");
+					if (intVal != INVALID_PARAM)
+						doc.setToPage(intVal);
 					break;
 				}
 				case "output":
@@ -828,6 +892,12 @@ public boolean readParamFile(String fileName)
 					intVal = ( (intVal + pageNoOffset) & 0xFFFE) - 1;
 					foldOutList.add(intVal);
 					break;
+				case "pagesizehoriz":
+					pageSizeX = getDoubleParam(val, elementName, 0.0) * MM2PDF;
+					break;
+				case "pagesizevert":
+					pageSizeY = getDoubleParam(val, elementName, 0.0) * MM2PDF;
+					break;
 				default:
 					System.err.println("Unknown parameter '" + elementName + "' in parameter file " + fileName);
 				}
@@ -859,6 +929,22 @@ private int getIntParam(String tagContent, String elementName, int defaultVal)
 		val = defaultVal;
 	}
 	return val;
+}
+
+private int getIntAttribute(XMLStreamReader reader, String elementName, String attrName)
+{
+
+	String	strVal	= reader.getAttributeValue(null, attrName);
+	int		intVal	= INVALID_PARAM;
+	if (strVal != null)
+	{
+		try {
+			intVal = Integer.parseInt(strVal);
+		} catch (NumberFormatException e) {
+			System.err.println(elementName + " tag / " + attrName + " attribute: Invalid or empty value; ignoring.");
+		}
+	}
+	return intVal;
 }
 
 private double getDoubleParam(String tagContent, String elementName, double defaultVal)

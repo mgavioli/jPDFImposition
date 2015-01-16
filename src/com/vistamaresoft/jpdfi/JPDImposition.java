@@ -406,7 +406,7 @@ public static String formatValToString(Format format)
 		return "in16v";
 	case none:
 		return "none";
-	default:				// any other string defaults to "booklet"
+	default:				// any other value defaults to "booklet"
 		return "booklet";
 	}
 }
@@ -428,6 +428,6 @@ public static Format formatStringToVal(String format)
 		return Format.in16v;
 	else if (format.equals("none"))
 		return Format.none;
-	return Format.booklet;
+	return Format.booklet;	// any other string defaults to "booklet"
 }
 }

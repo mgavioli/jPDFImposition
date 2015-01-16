@@ -41,14 +41,11 @@ import de.intarsys.pdf.pd.PDResources;
 	CLASS JPDImposition
 *******************/
 
-// TODO : implement JPDIResourceManager as an Observer to observe JPDISourceStatus, in order
-//	to be notified when source document changes to invalidate cached objects in page maps.
-
 public class JPDIResourceMerger /*implements Observer*/
 {
 // FIELDS
 protected int							uniqueId;
-protected HashMap<COSObject, COSName>[]	pageMap;	// map of resources used in each destination page
+protected HashMap<COSName, COSObject>[]	pageMap;	// map of resources used in each destination page
 protected COSDictionary[]				pageRes;	// dictionary of resources for each destination page
 
 /******************
@@ -75,11 +72,11 @@ Returns:	true = success | false = failure */
 public boolean setNumOfDestPages(int numOfDestPages)
 {
 	releaseDestPages();
-	pageMap			= (HashMap<COSObject, COSName>[])new HashMap[numOfDestPages];
+	pageMap			= (HashMap<COSName, COSObject>[])new HashMap[numOfDestPages];
 	pageRes			= new COSDictionary[numOfDestPages];
 	for (int i = 0; i < numOfDestPages; i++)
 	{
-		pageMap[i]	= new HashMap<COSObject, COSName>();
+		pageMap[i]	= new HashMap<COSName, COSObject>();
 		pageRes[i]	= PDResources.META.createNew().cosGetDict();
 	}
 	return true;
@@ -152,7 +149,7 @@ public boolean merge(int destPageIdx, PDPage srcPage)
 				while (srcTableIter.hasNext())
 				{
 					COSDictionary.Entry	res	= srcTableIter.next();
-					pageMap[destPageIdx].put((COSObject)res.getValue(), (COSName)res.getKey());
+					pageMap[destPageIdx].put((COSName)res.getKey(), (COSObject)res.getValue());
 				}
 			}
 		}
@@ -173,18 +170,20 @@ public boolean merge(int destPageIdx, PDPage srcPage)
 					COSDictionary.Entry	res			= srcTableIter.next();
 					COSName				resName		= (COSName)res.getKey();
 					COSObject			resValue	= (COSObject)res.getValue();
+					COSName				dstPageName;
 					// look in PAGE MAP for this object, retrieving its name if object found
-					COSName dstPageName	= pageMap[destPageIdx].get(resValue);
+//					COSName dstPageName	= pageMap[destPageIdx].get(resValue);
+					boolean				objIsUsed	= pageMap[destPageIdx].containsValue(resValue);
 					// check if PAGE MAP already uses this name for an object
 					boolean				nameIsUsed	= false;
-					for(Map.Entry<COSObject, COSName> entry : pageMap[destPageIdx].entrySet())
-						if (entry.getValue().stringValue().equals(resName.stringValue()) )
+					for(COSName name : pageMap[destPageIdx].keySet())
+						if (name.stringValue().equals(resName.stringValue()) )
 						{
 							nameIsUsed = true;
 							break;
 						}
 					// if page doesn't contain this object, add it to map and to dictionary
-					if (dstPageName == null)
+					if (!objIsUsed)
 					{
 						if (nameIsUsed)
 						{
@@ -193,16 +192,25 @@ public boolean merge(int destPageIdx, PDPage srcPage)
 						}
 						else
 							dstPageName = resName;
-						pageMap[destPageIdx].put(resValue, dstPageName);
 						dstTableDict.basicPutSilent(dstPageName, resValue);
+						pageMap[destPageIdx].put(dstPageName, resValue);
 					}
 					// if page already contains this object, check its name
 					else
+					{
+						dstPageName = COSName.create("");
+						for(Map.Entry<COSName, COSObject> entry : pageMap[destPageIdx].entrySet())
+							if (entry.getValue() == resValue)
+							{
+								dstPageName = entry.getKey();
+								break;
+							}
 						// if the dest. page knows the object under a different name
 						// the name in the source page shall be changed into the dest. page name
 						if (!dstPageName.stringValue().equals(resName.stringValue()))
 							renameList.put(resName, dstPageName);
 						// if source pages uses the same name as the dest. page, do nothing
+					}
 				}
 			}
 
@@ -302,7 +310,9 @@ protected String uniqueNameString()
 	UPDATE
 ******************
 
-Called when the source document changes. Invalidate (but do not delete) all the current contents of page maps.
+Called when the source document changes. Keeps all names in page maps to avoid duplicates,
+but associates them with null objects, as COSOjbect's of the new document are different
+from any COSObject of the previous document, regardless of names.
 
 Parameters:	who:	the Observable sending the event
 			what:	the actual event
@@ -310,9 +320,12 @@ Returns:	none */
 /*
 public void update(Observable who, Object what)
 {
+	if (!what.equals(JPDIMsgs.MSG_NEW_DOC))			// we are only interested in the MSG_NEW_DOC
+		return;
 	for (int i = 0; i < pageMap.length; i++)
-		for (COSObject obj : pageMap[i].keySet())
-			obj = null;
+//		pageMap[i].clear();
+		for (COSName obj : pageMap[i].keySet())
+			pageMap[i].put(obj, null);
 }
 */
 }
