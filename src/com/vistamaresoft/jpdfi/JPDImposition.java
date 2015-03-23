@@ -304,7 +304,12 @@ private void formatSetup(TreeSet<Integer>foldOutList)
 	if (format == Format.booklet)
 		for (Integer foldOut : foldOutList)
 			if (foldOut < totPages)
-				numOfSheetPages -= 2;
+			{
+				if (foldOut < totPages-1)	// if fold-out is not the last page
+					numOfSheetPages -= 2;	//	it takes 2 pages away from reckon
+				else						// if it the last page
+					numOfSheetPages -= 1;	//	it takes away only itself
+			}
 	// round up number of sheets and number of signatures
 	int	numOfSheets		= (numOfSheetPages + pagesPerSheet-1) / pagesPerSheet;
 	int	numOfSigns		= (numOfSheets + maxSheetsPerSign-1) / maxSheetsPerSign;
