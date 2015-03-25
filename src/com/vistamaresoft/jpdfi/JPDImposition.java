@@ -32,9 +32,10 @@ public class JPDImposition
 {
 // PUBLIC DEFINITIONS
 
-public static final int	DEFAULT_SHEETS_PER_SIGN	= 5;
-public static final int	OUT_OF_SEQUENCE_PAGE	= -1;
-public static final int	NO_PAGE					= -2;
+public static final int		DEFAULT_SHEETS_PER_SIGN	= 5;
+public static final double	MM2PDF					= 72 / 25.4;	// to convert mm to PDF default units (1/72 inch)
+public static final int		OUT_OF_SEQUENCE_PAGE	= -1;
+public static final int		NO_PAGE					= -2;
 
 public enum Format
 {
@@ -54,12 +55,16 @@ public enum Format
 
 // PRIVATE DEFINITIONS
 
+private static final double	FOLDOUT_XOFFSET			= (7*MM2PDF);	// how much to shift the internal pages of a fold-out
+
 private class JPDIPageImpoData implements Cloneable
 {
-	int	destPage;		/// in which page of the signature the page shall end up (0-based)
-	int	row;			/// in which row of that page (0-based)
-	int	col;			/// in which column of that page (0-based)
+	int	destPage;		// in which page of the signature the page shall end up (0-based)
+	int	row;			// in which row of that page (0-based)
+	int	col;			// in which column of that page (0-based)
 	int	rotation;		// with which rotation (in degrees)
+	double xOffset;		// the horizontal offset (in PDF units)
+	double yOffset;		// the vertical offset (in PDF units)
 
 	@Override
 	protected Object clone() throws CloneNotSupportedException
@@ -176,16 +181,17 @@ private void applyFormat(TreeSet<Integer>foldOutList) throws CloneNotSupportedEx
 		for (int currPageNo = 0; docPageNo < totPages && currPageNo < numOfSrcPages; currPageNo++)
 		{
 			JPDIPageImpoData pid = new JPDIPageImpoData();
+			pid.xOffset = pid.yOffset = 0;
 			signImpoData.add(pid);
 
 			// BOOKLET FOLD-OUT SPECIAL CASE
 			if (format == Format.booklet && foldOutList.contains(docPageNo))
 			{
 				// we deal here with 4 different pages:
-				// 1st: the front page of the leaf the fold-out is attached to ('base leaf', previous page)
+				// 1st: the front page of the leaf the fold-out is attached to ('base leaf', previous page, pid1)
 				// 2nd: the fold-out front page (current page, pid)
-				// 3rd: the fold-out back page
-				// 4th: the base leaf back page
+				// 3rd: the fold-out back page (pid3)
+				// 4th: the base leaf back page (pid4)
 				// 2nd and 3rd (fold-out) are 'shifted' in the position of 1st and 4th (base page) resp.
 				// 1st and 4th (base page) are moved to the 'other' column of the same page
 				// the 3rd and 4th pages are yet to be seen, but are managed here anyway
@@ -195,8 +201,9 @@ private void applyFormat(TreeSet<Integer>foldOutList) throws CloneNotSupportedEx
 				pid.destPage	= pid1.destPage;
 				pid.rotation	= pid1.rotation;
 				pid.row			= pid1.row;
-				// shift 1st page in the 'other' column
-				pid1.col = 1  - pid.col;
+				// shift 1st page in the 'other' column and shift it slightly to the right
+				pid1.col		= 1  - pid.col;
+				pid1.xOffset	= FOLDOUT_XOFFSET;
 				// 'next page' is +1 while 'going up' the signature (front leaves) and 1st page is on even dest. page
 				// and -1 while 'going down' (back leaves) and 1st page is on odd dest. page
 				int	nextPageOffset	= (pid.destPage & 1) > 0 ? -1 : +1;
@@ -228,6 +235,7 @@ private void applyFormat(TreeSet<Integer>foldOutList) throws CloneNotSupportedEx
 						JPDIPageImpoData pid4 = (JPDIPageImpoData)pid.clone();
 						signImpoData.add(pid4);
 						pid4.destPage	= pid.destPage + nextPageOffset;
+						pid4.xOffset	= -FOLDOUT_XOFFSET;	// shift it slightly to the left
 						docPageNo++;
 					}
 				}
@@ -372,15 +380,15 @@ public double pageDestOffsetX(int srcPageNo, int signNo, double srcPageWidth)
 {
 	if (srcPageNo < 0 || srcPageNo > pageImpoData.get(signNo).size()-1)
 		srcPageNo = 0;
-	return srcPageWidth * pageImpoData.get(signNo).get(srcPageNo).col
-			+ (pageImpoData.get(signNo).get(srcPageNo).rotation > 0 ? srcPageWidth : 0.0);
+	JPDIPageImpoData pid = pageImpoData.get(signNo).get(srcPageNo);
+	return srcPageWidth * pid.col + (pid.rotation > 0 ? srcPageWidth : 0.0) + pid.xOffset;
 }
 public double pageDestOffsetY(int srcPageNo, int signNo, double srcPageHeight)
 {
 	if (srcPageNo < 0 || srcPageNo > pageImpoData.get(signNo).size()-1)
 		srcPageNo = 0;
-	return srcPageHeight * pageImpoData.get(signNo).get(srcPageNo).row
-			+ (pageImpoData.get(signNo).get(srcPageNo).rotation > 0 ? srcPageHeight : 0.0);
+	JPDIPageImpoData pid = pageImpoData.get(signNo).get(srcPageNo);
+	return srcPageHeight * pid.row + (pid.rotation > 0 ? srcPageHeight : 0.0) + pid.yOffset;
 }
 public int pageDestRotation(int srcPageNo, int signNo)
 {

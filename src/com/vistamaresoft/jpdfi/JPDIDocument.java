@@ -71,7 +71,6 @@ public class JPDIDocument /*extends Object*/
 
 private static final int		FRONT_PAGE		= 0;			// for indices into pageOffsetX/Y
 private static final int		BACK_PAGE		= 1;
-private static final double		MM2PDF			= 72 / 25.4;	// to convert mm to PDF default units (1/72 inch)
 private static final int		INVALID_PARAM	= -1000000;		// used as rejected parameter value
 //Turn the use of JDPIResourceManager on instead of an older way of merging
 //which had proven unreliable and will be removed. Leave on 'true'.
@@ -962,16 +961,16 @@ public boolean readParamFile(String fileName)
 							JPDImposition.DEFAULT_SHEETS_PER_SIGN);
 					break;
 				case "backoffsetx":
-					pageOffsetX[BACK_PAGE] = getDoubleParam(val, elementName, 0.0) * MM2PDF;
+					pageOffsetX[BACK_PAGE] = getDoubleParam(val, elementName, 0.0) * JPDImposition.MM2PDF;
 					break;
 				case "backoffsety":
-					pageOffsetY[BACK_PAGE] = getDoubleParam(val, elementName, 0.0) * MM2PDF;
+					pageOffsetY[BACK_PAGE] = getDoubleParam(val, elementName, 0.0) * JPDImposition.MM2PDF;
 					break;
 				case "frontoffsetx":
-					pageOffsetX[FRONT_PAGE] = getDoubleParam(val, elementName, 0.0) * MM2PDF;
+					pageOffsetX[FRONT_PAGE] = getDoubleParam(val, elementName, 0.0) * JPDImposition.MM2PDF;
 					break;
 				case "frontoffsety":
-					pageOffsetY[FRONT_PAGE] = getDoubleParam(val, elementName, 0.0) * MM2PDF;
+					pageOffsetY[FRONT_PAGE] = getDoubleParam(val, elementName, 0.0) * JPDImposition.MM2PDF;
 					break;
 				case "foldout":
 					if (format != JPDImposition.Format.booklet)
@@ -986,10 +985,10 @@ public boolean readParamFile(String fileName)
 					foldOutList.add(intVal);
 					break;
 				case "pagesizehoriz":
-					pageSizeX = getDoubleParam(val, elementName, 0.0) * MM2PDF;
+					pageSizeX = getDoubleParam(val, elementName, 0.0) * JPDImposition.MM2PDF;
 					break;
 				case "pagesizevert":
-					pageSizeY = getDoubleParam(val, elementName, 0.0) * MM2PDF;
+					pageSizeY = getDoubleParam(val, elementName, 0.0) * JPDImposition.MM2PDF;
 					break;
 				default:
 					System.err.println("Unknown parameter '" + elementName + "' in parameter file " + fileName);
