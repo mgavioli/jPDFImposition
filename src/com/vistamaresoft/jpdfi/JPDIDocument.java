@@ -113,14 +113,17 @@ private class JPDISourceDoc
 
 private class JPDISourceStatus /*extends Observable*/
 {
+	private boolean		append;			// whether we are in append mode or not
 	private	PDDocument	currDoc;		// the current source document
 	private	int			currDocNo;		// the index of the current source document into the srcDocs array
 	private int			currDocPageNo;	// the no. (0-based) of the current page in the current document 
 	private	PDPage		currPage;		// the current source page
 	private	ArrayList<JPDISourceDoc>	srcDocs;		// the various source documents
+	private ArrayList<JPDISourceDoc>	appendDocs;		// the documents to append as they are
 
 	public void init()
 	{
+		append			= false;		// start in non-append mode
 		currDocNo		= -1;			// before first document
 		currDocPageNo	= -1;			// before first page
 		currDoc			= null;
@@ -129,6 +132,10 @@ private class JPDISourceStatus /*extends Observable*/
 			srcDocs		= new ArrayList<JPDISourceDoc>();
 		else
 			srcDocs.clear();
+		if (appendDocs == null)
+			appendDocs	= new ArrayList<JPDISourceDoc>();
+		else
+			appendDocs.clear();
 	}
 
 	/******************
@@ -137,18 +144,27 @@ private class JPDISourceStatus /*extends Observable*/
 
 	public PDDocument currDoc()		{ return currDoc;	}
 
+	public boolean hasAppend()
+	{
+		return appendDocs.size() > 0;
+	}
+
 	public String inputFileNames()
 	{
-		String fileNames = "";;
+		String fileNames = "";
 		for (JPDISourceDoc doc : srcDocs)
+			fileNames += doc.fileName + "\n";
+		for (JPDISourceDoc doc : appendDocs)
 			fileNames += doc.fileName + "\n";
 		return fileNames;
 	}
 
 	public PDPage nextPage()
 	{
+		ArrayList<JPDISourceDoc> docList = append ? appendDocs : srcDocs;
+
 		// if within some document and we reached its end, discard current page
-		if (currDocNo >= 0 && currDocPageNo >= srcDocs.get(currDocNo).toPage)
+		if (currDocNo >= 0 && currDocPageNo >= docList.get(currDocNo).toPage)
 			currPage = null;
 		// if we have a current page, get the next
 		if (currPage != null)
@@ -156,14 +172,14 @@ private class JPDISourceStatus /*extends Observable*/
 		// if no current page (either no doc at all or current doc ended or its toPage was reached)
 		if (currPage == null)
 			// get next doc, if any
-			if (srcDocs != null && currDocNo < srcDocs.size()-1)
+			if (docList != null && currDocNo < docList.size()-1)
 			{
 if (dontOpenAllDocs)
 	closeSrcDoc(currDoc);
 				currDocNo++;
-				JPDISourceDoc	srcDoc	= srcDocs.get(currDocNo);
+				JPDISourceDoc	srcDoc	= docList.get(currDocNo);
 if (dontOpenAllDocs)
-	currDoc = openSrcDoc(srcDocs.get(currDocNo).fileName);
+	currDoc = openSrcDoc(docList.get(currDocNo).fileName);
 else
 	currDoc = srcDoc.doc;
 //				setChanged();
@@ -191,6 +207,17 @@ else
 			pageNo -= doc.numOfPages;
 		}
 		return 0;
+	}
+
+	public PDPage startAppend()
+	{
+		// if already in append mode or no doc to append, fail
+		if (append || appendDocs.size() < 1)
+			return null;
+		append = true;
+		currPage = null;
+		currDocNo = -1;
+		return nextPage();
 	}
 
 	public int totPages()
@@ -229,6 +256,34 @@ if (!dontOpenAllDocs)
 		if (srcDocs.size() > 0)
 			srcDoc.pageNoOffset	= srcDocs.get(srcDocs.size()-1).pageNoOffset;
 		srcDocs.add(srcDoc);
+		return srcDoc;
+	}
+	/******************
+		ADD A NEW SOURCE DOCUMENT TO APPEND
+	*******************/
+
+	public JPDISourceDoc addAppendDoc(String fileName)
+	{
+		PDDocument	doc	= openSrcDoc(fileName);
+		if (doc == null)
+			return null;
+		PDPageTree	pageTree 	= doc.getPageTree();
+		int			numOfPages	= pageTree.getCount();
+if (dontOpenAllDocs)
+	if (!closeSrcDoc(doc))
+		return null;
+		// create a new JPDISourceDoc and add it to the list
+		JPDISourceDoc	srcDoc	= new JPDISourceDoc();
+		srcDoc.fileName			= fileName;
+if (!dontOpenAllDocs)
+	srcDoc.doc				= doc;
+		srcDoc.numOfPages		= numOfPages;
+		srcDoc.fromPage			= 0;
+		srcDoc.toPage			= numOfPages - 1;
+		// inherit page num. offset from previous document
+		if (appendDocs.size() > 0)
+			srcDoc.pageNoOffset	= srcDocs.get(appendDocs.size()-1).pageNoOffset;
+		appendDocs.add(srcDoc);
 		return srcDoc;
 	}
 }
@@ -292,9 +347,11 @@ Fills the document with data from sourceDoc according to impo. */
 
 public boolean impose()
 {
+	// Format.none special case
 	if (format == JPDImposition.Format.none)
-		return concatenate();
+		return concatenate(null);
 
+	// look for a start page and a start document
 	PDPage	currSrcPage	= srcStatus.nextPage();
 	if (currSrcPage == null)
 		return false;
@@ -447,27 +504,41 @@ public boolean impose()
 		// empty catch: if we cannot close it, just ignore it!
 	}
 
+	// add appended documents, if any
+	if (srcStatus.hasAppend())
+	{
+		currSrcPage = srcStatus.startAppend();
+		return concatenate(resMap);
+	}
 	return true;
 }
 
 /******************
 	CONCATENATE
 *******************
-Concatenates several source documents into a destination document.
-A special case of impose() when imposition format is Format.none */
+Concatenates several source documents into the destination document.
+Used for:
+* imposition format Format.none (all input documents are concatenated into a single output doc)
+* appending unformatted documents to an imposition.
 
-public boolean concatenate()
+Parameters:	resMap: a Map used to collect page resources; may be null if no map already exists
+				(typically when all input documents are concatenated into a single output doc)
+				or an existing map, if appending to an existing imposition. 
+Returns:	true = success | false = unrecoverable failure */
+
+public boolean concatenate(HashMap<COSIndirectObject, COSCompositeObject> resMap)
 {
-	PDPage		currSrcPage	= srcStatus.nextPage();
+	PDPage		currSrcPage = srcStatus.currPage != null ? srcStatus.currPage : srcStatus.nextPage();
 	if (currSrcPage == null)
 		return false;
 	PDDocument	srcDoc 		= srcStatus.currDoc();
 	if (srcDoc == null)
 		return false;
-	if (!createDestDocument(srcDoc))
-		return false;
-	HashMap<COSIndirectObject, COSCompositeObject> resMap =
-			new HashMap<COSIndirectObject, COSCompositeObject>();
+	if (dstDoc == null)
+		if (!createDestDocument(srcDoc))
+			return false;
+	if (resMap == null)
+		resMap = new HashMap<COSIndirectObject, COSCompositeObject>();
 
 	// for each signature
 	while (currSrcPage != null)
@@ -833,6 +904,28 @@ public boolean readParamFile(String fileName)
 						pageNoOffset = intVal;
 					doc.pageNoOffset = pageNoOffset;
 
+					intVal	= getIntAttribute(reader, elementName, "fromPage");
+					if (intVal != INVALID_PARAM)
+						doc.setFromPage(intVal);
+
+					intVal	= getIntAttribute(reader, elementName, "toPage");
+					if (intVal != INVALID_PARAM)
+						doc.setToPage(intVal);
+					break;
+				}
+				case "append":
+				{
+					if (!inputFileSeen)			// if no 'regular' input file
+					{
+						System.err.println("Cannot \"append\" without previous input documents; ignoring.");
+						break;
+					}
+					File file = new File(val);
+					String fullFilePath = file.isAbsolute() ? val : filePath + File.separator + val;
+					JPDISourceDoc doc = srcStatus.addAppendDoc(fullFilePath);
+					if (doc == null)
+						return false;
+					// retrieve input attributes
 					intVal	= getIntAttribute(reader, elementName, "fromPage");
 					if (intVal != INVALID_PARAM)
 						doc.setFromPage(intVal);
