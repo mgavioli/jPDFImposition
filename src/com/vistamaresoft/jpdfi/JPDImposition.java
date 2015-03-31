@@ -195,21 +195,42 @@ private void applyFormat(TreeSet<Integer>foldOutList) throws CloneNotSupportedEx
 				// 2nd and 3rd (fold-out) are 'shifted' in the position of 1st and 4th (base page) resp.
 				// 1st and 4th (base page) are moved to the 'other' column of the same page
 				// the 3rd and 4th pages are yet to be seen, but are managed here anyway
-				int	currArrSize = signImpoData.size();
-				JPDIPageImpoData pid1 = signImpoData.get(currArrSize-2);
-				pid.col			= pid1.col;
-				pid.destPage	= pid1.destPage;
-				pid.rotation	= pid1.rotation;
-				pid.row			= pid1.row;
-				// shift 1st page in the 'other' column and shift it slightly to the right
-				pid1.col		= 1  - pid.col;
-				pid1.xOffset	= FOLDOUT_XOFFSET;
+				int					currArrSize			= signImpoData.size();
+				JPDIPageImpoData	pid1				= signImpoData.get(currArrSize-2);
+				boolean				hasSingleOpposite	= true;		// by default, there is an opposite single page
+				// if pid1 is an OUT_OF_SEQUENCE_PAGE, we are dealing with two fold-outs glued together
+				if (pid1.destPage == OUT_OF_SEQUENCE_PAGE)
+				{
+					// 1st page is first of a new dest. page
+					pid1.col		= 0;				// first column
+					pid1.destPage	= (++maxDestPage);	// of a new page
+					// TODO : .row contains the glue-to page; it would be useful
+					// to keep this info somewhere; possibly it is worth adding
+					// a JPDIPageImpoData field for this, instead of recycling .row
+					pid1.row		= 0;				// booklet only has 1 row
+					hasSingleOpposite	= false;		// opposite is not a single page
+					// 2nd page is second of the new dest. page
+					pid.col			= 1;
+					pid.destPage	= pid1.destPage;
+					pid.rotation	= pid1.rotation;
+					pid.row			= pid1.row;
+				}
+				else				// no double fold-out
+				{
+					pid.col			= pid1.col;			// move 2nd page in the place of 1st
+					pid.destPage	= pid1.destPage;
+					pid.rotation	= pid1.rotation;
+					pid.row			= pid1.row;
+					pid1.col		= 1 - pid.col;		// move 1st page in the 'other' column
+				}
+				pid1.xOffset	= FOLDOUT_XOFFSET;		// shift 1st page slightly to the right
 				// 'next page' is +1 while 'going up' the signature (front leaves) and 1st page is on even dest. page
 				// and -1 while 'going down' (back leaves) and 1st page is on odd dest. page
 				int	nextPageOffset	= (pid.destPage & 1) > 0 ? -1 : +1;
 				// if 'going down', the single leaf opposite to the fold-out sheet has already been seen:
 				// locate its two pages and move them out of sequence
-				if (nextPageOffset == -1)
+				// (unless we are dealing with a double fold-out)
+				if (nextPageOffset == -1 && hasSingleOpposite)
 				{
 					signImpoData.get(pid1.destPage).destPage	= OUT_OF_SEQUENCE_PAGE;
 					signImpoData.get(pid1.destPage).row			= docPageNo - 1;	// glue to pid1
