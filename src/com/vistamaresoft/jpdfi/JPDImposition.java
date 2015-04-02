@@ -242,21 +242,24 @@ private void applyFormat(TreeSet<Integer>foldOutList) throws CloneNotSupportedEx
 					maxDestPage = pid.destPage;
 				if (docPageNo < totPages)
 				{
-					// fold-out back page (3rd page) is in the same position, but of next sheet, of 1st page
+					// fold-out back page (3rd page) is in the same dest. page position as 1st page
 					JPDIPageImpoData pid3 = (JPDIPageImpoData)pid1.clone();
 					signImpoData.add(pid3);
-					pid3.destPage = pid1.destPage + nextPageOffset;
-					// back page of base leaf (4th page) is in the same position, but of next page, of 2nd page
+					pid3.destPage	= pid1.destPage + nextPageOffset;
+					// and on the other side of 2nd page: set symmetrical x offset
+					pid3.xOffset	= -pid.xOffset;
 //					currPageNo++;		// NO: fold-out pages do not count for imposition
 					docPageNo++;
 					if (pid3.destPage > maxDestPage)
 						maxDestPage = pid3.destPage;
 					if (docPageNo < totPages)
 					{
+						// back page of base leaf (4th page) is in the same dest. page position as 2nd page
 						JPDIPageImpoData pid4 = (JPDIPageImpoData)pid.clone();
 						signImpoData.add(pid4);
 						pid4.destPage	= pid.destPage + nextPageOffset;
-						pid4.xOffset	= -FOLDOUT_XOFFSET;	// shift it slightly to the left
+						// and on the other side of 1st page: set symmetrical x offset
+						pid4.xOffset	= -pid1.xOffset;
 						docPageNo++;
 					}
 				}
