@@ -170,6 +170,7 @@ private class JPDISourceStatus /*extends Observable*/
 			currPage = currPage.getNextPage();
 		// if no current page (either no doc at all or current doc ended or its toPage was reached)
 		if (currPage == null)
+		{
 			// get next doc, if any
 			if (docList != null && currDocNo < docList.size()-1)
 			{
@@ -192,6 +193,9 @@ else
 				}
 //				notifyObservers(JPDIMsgs.MSG_NEW_DOC);
 			}
+		}
+		else
+			currDocPageNo++;
 		return currPage;
 	}
 
@@ -235,8 +239,19 @@ else
 
 	public JPDISourceDoc addSrcDoc(String fileName)
 	{
-		PDDocument	doc	= openSrcDoc(fileName);
-		if (doc == null)
+		PDDocument	doc = null;
+		// check this source document already exists
+		for (JPDISourceDoc currDoc : srcDocs)
+		{
+			if (currDoc.fileName.equals(fileName))
+			{
+				doc = currDoc.doc;		// found!
+				break;
+			}
+		}
+		if (doc == null)				// if none found, create a new one
+			doc	= openSrcDoc(fileName);
+		if (doc == null)				// if still no doc => failure
 			return null;
 		PDPageTree	pageTree 	= doc.getPageTree();
 		int			numOfPages	= pageTree.getCount();
@@ -302,6 +317,7 @@ private double					pageOffsetX[]	= { 0.0, 0.0 };
 private double					pageOffsetY[]	= { 0.0, 0.0 };
 private double					pageSizeX		= 0.0;
 private double					pageSizeY		= 0.0;
+private TreeSet<Integer>		signBreakList;
 private JPDISourceStatus		srcStatus;
 
 /******************
@@ -327,6 +343,10 @@ private void init()
 		foldOutList		= new TreeSet<Integer>();
 	else
 		foldOutList.clear();
+	if (signBreakList == null)
+		signBreakList		= new TreeSet<Integer>();
+	else
+		signBreakList.clear();
 	outputFileName		= null;
 	impo				= new JPDImposition();
 	impoFont			= null;
@@ -910,6 +930,12 @@ public boolean readParamFile(String fileName)
 					intVal	= getIntAttribute(reader, elementName, "toPage");
 					if (intVal != INVALID_PARAM)
 						doc.setToPage(intVal);
+
+					if (getBoolAttribute(reader, elementName, "signatureBreak") == true)
+					{
+						intVal = doc.toPage;
+						signBreakList.add(intVal);
+					}
 					break;
 				}
 				case "append":
@@ -944,16 +970,9 @@ public boolean readParamFile(String fileName)
 				{
 					format = JPDImposition.formatStringToVal(val);
 					formatSubParam = 0;
-					if (format == JPDImposition.Format.booklet)
-					{
-						val = reader.getAttributeValue(null, "firstPageAsEven");
-						if (val != null)
-						{
-							val = val.toLowerCase();
-							if (val.equalsIgnoreCase("yes") || val.equals("true") || val.equals("1"))
+					if (format == JPDImposition.Format.booklet
+						&& getBoolAttribute(reader, elementName, "firstPageAsEven") == true)
 								formatSubParam = -1;
-						}
-					}
 					break;
 				}
 				case "sheetspersign":
@@ -1023,9 +1042,21 @@ private int getIntParam(String tagContent, String elementName, int defaultVal)
 	return val;
 }
 
+private boolean getBoolAttribute(XMLStreamReader reader, String elementName, String attrName)
+{
+	boolean	boolVal	= false;
+	String	strVal	= reader.getAttributeValue(null, attrName);
+	if (strVal != null)
+	{
+		strVal = strVal.toLowerCase();
+		if (strVal.equalsIgnoreCase("yes") || strVal.equals("true") || strVal.equals("1"))
+			boolVal = true;
+	}
+	return boolVal;
+}
+
 private int getIntAttribute(XMLStreamReader reader, String elementName, String attrName)
 {
-
 	String	strVal	= reader.getAttributeValue(null, attrName);
 	int		intVal	= INVALID_PARAM;
 	if (strVal != null)
