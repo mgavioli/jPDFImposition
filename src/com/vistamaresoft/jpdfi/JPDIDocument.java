@@ -27,7 +27,6 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Iterator;
 //import java.util.Observable;
 import java.util.TreeSet;
 
@@ -39,11 +38,11 @@ import javax.xml.stream.XMLStreamReader;
 import de.intarsys.pdf.cds.CDSRectangle;
 import de.intarsys.pdf.content.CSContent;
 import de.intarsys.pdf.content.common.CSCreator;
-import de.intarsys.pdf.cos.COSArray;
+//import de.intarsys.pdf.cos.COSArray;
 import de.intarsys.pdf.cos.COSCatalog;
 import de.intarsys.pdf.cos.COSCompositeObject;
 import de.intarsys.pdf.cos.COSDocument;
-import de.intarsys.pdf.cos.COSDocumentElement;
+//import de.intarsys.pdf.cos.COSDocumentElement;
 import de.intarsys.pdf.cos.COSDictionary;
 import de.intarsys.pdf.cos.COSIndirectObject;
 import de.intarsys.pdf.cos.COSName;
@@ -72,9 +71,6 @@ public class JPDIDocument /*extends Object*/
 private static final int		FRONT_PAGE		= 0;			// for indices into pageOffsetX/Y
 private static final int		BACK_PAGE		= 1;
 private static final int		INVALID_PARAM	= -1000000;		// used as rejected parameter value
-//Turn the use of JDPIResourceManager on instead of an older way of merging
-//which had proven unreliable and will be removed. Leave on 'true'.
-public static final boolean		useMerger		= true;
 public static final boolean		dontOpenAllDocs	= false;
 
 // Data about a source document
@@ -86,12 +82,7 @@ private class JPDISourceDoc
 	private	int			numOfPages;			// number of pages this document will provide
 	private	int			pageNoOffset;		// the offset from page number to page sequence index
 			PDDocument	doc;				// the document itself
-/*
-	public int	fromPage()		{ return fromPage;		}
-	public int	numOfPages()	{ return numOfPages;	}
-	public int	pageNoOffset()	{ return pageNoOffset;	}
-	public int	toPage()		{ return toPage;		}
-*/
+
 	public void	setFromPage(int val)
 	{
 		int newVal	= val + pageNoOffset - 1;
@@ -395,14 +386,13 @@ public boolean impose()
 	while (currSrcPage != null)
 	{
 		int		numOfDestPages = impo.numOfDestPagesPerSignature(currSignNo);
-		if (useMerger)
-			if (merger == null)
-			{
-				merger = new JPDIResourceMerger(/*dstDoc,*/ numOfDestPages);
-//				srcStatus.addObserver(merger);
-			}
-			else
-				merger.setNumOfDestPages(numOfDestPages);
+		if (merger == null)
+		{
+			merger = new JPDIResourceMerger(/*dstDoc,*/ numOfDestPages);
+//			srcStatus.addObserver(merger);
+		}
+		else
+			merger.setNumOfDestPages(numOfDestPages);
 		// get destination media box from source page media box
 		CDSRectangle destBox	= currSrcPage.getMediaBox().copy().normalize();
 		// set dimensions, if given as parameters
@@ -474,15 +464,7 @@ public boolean impose()
 			// COPY RESOURCES
 
 			if (currSrcPage.getResources() != null)
-			{
-				if (useMerger)
-					merger.merge(destPageNo, currSrcPage);
-				else
-				{
-					COSDictionary					resDict	= currSrcPage.getResources().cosGetDict();
-					mergeResources(resDict, destResDict[destPageNo]);
-				}
-			}
+				merger.merge(destPageNo, currSrcPage);
 			destCreator[destPageNo].restoreState();
 			currSrcPage = srcStatus.nextPage();
 		}
@@ -497,10 +479,7 @@ public boolean impose()
 			destPage[destPageNo].cosAddContents(pageStream);
 			// make a copy of accumulated page resources not yet copied and add to dest. page
 			COSObject	cosRes;
-			if (useMerger)
-				cosRes	= merger.getResources(destPageNo).copyDeep(resMap);
-			else
-				cosRes	= destResDict[destPageNo].copyDeep(resMap);
+			cosRes	= merger.getResources(destPageNo).copyDeep(resMap);
 			PDResources destPageRes	= (PDResources) PDResources.META.createFromCos(cosRes);
 			destPage[destPageNo].setResources(destPageRes);
 			// add page to doc and release objects no longer needed
@@ -510,8 +489,7 @@ public boolean impose()
 			destPage[destPageNo]	= null;
 			destResDict[destPageNo]	= null;
 		}
-		if (useMerger)
-			merger.releaseDestPages();
+		merger.releaseDestPages();
 		currSignNo++;
 	}
 	// add single pages, if any
@@ -747,67 +725,6 @@ protected boolean createSinglePage(PDPage currSrcPage, int gluePageNo, ArrayList
 	singlePages.add(destPage);
 
 	return true;
-}
-/******************
-	Merge a source resource dictionary into a destination resource dictionary
-*******************/
-
-protected void mergeResources(COSDictionary sourceDict, COSDictionary dest)
-{
-	@SuppressWarnings("unchecked")
-	Iterator<COSDictionary.Entry>	iter	= sourceDict.entryIterator();
-	// iterate on all the resource entries
-	while(iter.hasNext())
-	{
-		// retrieve entry name
-		COSDictionary.Entry	entry		= iter.next();
-		COSName				entryName	= (COSName)entry.getKey();
-		// if an entry with such a name already exists in the dest. dictionary
-		if (dest.containsKey(entryName))
-		{
-			// if "ProcSet", we are dealing with COSarray's:
-			// merge the source array into the dest. array
-			if (entryName.stringValue().equals("ProcSet"))
-			{
-				COSArray	entryArray		= (COSArray)entry.getValue();
-				COSArray	destEntryArr	= (COSArray)dest.get(entryName);
-				// iterate on source array elements
-				Iterator<COSDocumentElement>	iterName	= entryArray.basicIterator();
-				while (iterName.hasNext())
-				{
-					COSName	srcName	= (COSName)iterName.next();
-					boolean	found	= false;
-					// compare this source COSName with each dest. COSName
-					for (int i = 0; i < destEntryArr.size(); i++)
-					{
-						COSName destName = (COSName)destEntryArr.basicGet(i);
-						// if same name, mark as found and stop
-						if (srcName.stringValue().equals(destName.stringValue()) )
-						{
-							found = true;
-							break;
-						}
-					}
-					if (!found)				// if no such a name, add it to dest. array
-						destEntryArr.basicAddSilent(srcName.copyShallow());
-				}
-			}
-			// otherwise, we are dealing with COSDictionary'es:
-			// add to the dest. dictionary all the entries in source dictionary not already present
-			else
-			{
-				COSDictionary	entryDict		= (COSDictionary)entry.getValue();
-				COSDictionary	destEntryDict	= (COSDictionary)dest.get(entryName);
-				destEntryDict.addIfAbsent(entryDict);
-			}
-		}
-		// if no entry with such a name in dest. dictionary, add it as it is
-		else
-		{
-			COSObject	copy	= ((COSCompositeObject)entry.getValue()).copyShallow();
-			dest.basicPutSilent(entryName, copy);
-		}
-	}
 }
 
 /******************

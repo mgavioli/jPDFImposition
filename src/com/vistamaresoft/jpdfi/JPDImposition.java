@@ -101,7 +101,6 @@ private int		formatSubParam		= 0;
 private int		maxSheetsPerSign	= DEFAULT_SHEETS_PER_SIGN;	// max num. of sheets per signature
 // for each source page of each signature, define where and how to place it into the destination
 private ArrayList<ArrayList<JPDIPageImpoData>>	pageImpoData;
-//private int		totPages			= 1;	// total num. of pages in document
 private ArrayList<Integer>	sheetsPerSign;		// how many sheets each signature has
 
 /******************
@@ -159,7 +158,6 @@ public void setFormat(Format format, int formatSubParam, int maxSheetsPerSign,
 	this.maxSheetsPerSign	= maxSheetsPerSign;
 	pageImpoData			= new ArrayList<ArrayList<JPDIPageImpoData>>();
 	sheetsPerSign			= new ArrayList<Integer>();
-//	totPages				= numOfPages;
 	if (format != Format.booklet)
 		maxSheetsPerSign = 1;
 	if (maxSheetsPerSign < 1)
