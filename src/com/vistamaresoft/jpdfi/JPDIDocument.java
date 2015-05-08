@@ -383,7 +383,7 @@ public boolean impose()
 	JPDIResourceMerger	merger 		= null;
 	ArrayList<PDPage>	singlePages	= new ArrayList<PDPage>();
 	try {
-		impo.setFormat(format, formatSubParam, maxSheetsPerSign, srcStatus.totPages(), foldOutList);
+		impo.setFormat(format, formatSubParam, maxSheetsPerSign, srcStatus.totPages(), signBreakList, foldOutList);
 	} catch (CloneNotSupportedException e) {
 		System.err.println("Error while processing the format: " + e.getMessage());
 		e.printStackTrace();
@@ -933,7 +933,7 @@ public boolean readParamFile(String fileName)
 
 					if (getBoolAttribute(reader, elementName, "signatureBreak") == true)
 					{
-						intVal = doc.toPage;
+						intVal = srcStatus.totPages();
 						signBreakList.add(intVal);
 					}
 					break;

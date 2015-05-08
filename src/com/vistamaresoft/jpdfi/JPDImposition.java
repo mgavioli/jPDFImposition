@@ -101,8 +101,8 @@ private int		formatSubParam		= 0;
 private int		maxSheetsPerSign	= DEFAULT_SHEETS_PER_SIGN;	// max num. of sheets per signature
 // for each source page of each signature, define where and how to place it into the destination
 private ArrayList<ArrayList<JPDIPageImpoData>>	pageImpoData;
-private int		totPages			= 1;	// total num. of pages in document
-private int[]	sheetsPerSign;				// how many sheets each signature has
+//private int		totPages			= 1;	// total num. of pages in document
+private ArrayList<Integer>	sheetsPerSign;		// how many sheets each signature has
 
 /******************
 	Default C'tor
@@ -151,34 +151,46 @@ public int numOfRows()
 public int maxSheetsPerSignature()				{ return maxSheetsPerSign;	}
 
 public void setFormat(Format format, int formatSubParam, int maxSheetsPerSign,
-		int numOfPages, TreeSet<Integer>foldOutList)
+		int numOfPages, TreeSet<Integer>signBreakList, TreeSet<Integer>foldOutList)
 		throws CloneNotSupportedException
 {
 	this.format				= format;
 	this.formatSubParam		= formatSubParam;
 	this.maxSheetsPerSign	= maxSheetsPerSign;
-	totPages				= numOfPages;
+	pageImpoData			= new ArrayList<ArrayList<JPDIPageImpoData>>();
+	sheetsPerSign			= new ArrayList<Integer>();
+//	totPages				= numOfPages;
 	if (format != Format.booklet)
 		maxSheetsPerSign = 1;
 	if (maxSheetsPerSign < 1)
 		maxSheetsPerSign = 1;
-	applyFormat(foldOutList);
+	// make sure there is a signature break after the last page
+	if (signBreakList.size() == 0 || !signBreakList.contains(numOfPages))
+		signBreakList.add(numOfPages);
+	// iterate on signature breaks, creating a sequence of impositions
+	int currSignNo	= 0;
+	int	fromPage 	= 0;
+	for (Integer toPage : signBreakList)
+	{
+		currSignNo = applyFormat(currSignNo, fromPage, toPage, foldOutList);
+		fromPage = toPage;
+	}
 }
 
-private void applyFormat(TreeSet<Integer>foldOutList) throws CloneNotSupportedException
+private int applyFormat(int currSignNo, int fromPage, int toPage, TreeSet<Integer>foldOutList)
+		throws CloneNotSupportedException
 {
-	int		docPageNo	= 0;				// the current document page no. (0-based)
-	formatSetup(foldOutList);
+	int		docPageNo	= fromPage;				// the current document page no. (0-based)
+	formatSetup(fromPage, toPage, foldOutList);
 
 	// initialize pageImpoData for each page of each signature according to format
-	int		currSignNo = 0;
-	while (docPageNo < totPages)
+	while (docPageNo < toPage)
 	{
 		int maxDestPage		= 0;
-		int	numOfSrcPages	= sheetsPerSign[currSignNo] * numOfCols()* numOfRows() * 2;
+		int	numOfSrcPages	= sheetsPerSign.get(currSignNo) * numOfCols()* numOfRows() * 2;
 		ArrayList<JPDIPageImpoData>	signImpoData = new ArrayList<JPDIPageImpoData>(numOfSrcPages);
 		pageImpoData.add(signImpoData);
-		for (int currPageNo = 0; docPageNo < totPages && currPageNo < numOfSrcPages; currPageNo++)
+		for (int currPageNo = 0; docPageNo < toPage && currPageNo < numOfSrcPages; currPageNo++)
 		{
 			JPDIPageImpoData pid = new JPDIPageImpoData();
 			pid.xOffset = pid.yOffset = 0;
@@ -240,7 +252,7 @@ private void applyFormat(TreeSet<Integer>foldOutList) throws CloneNotSupportedEx
 				docPageNo++;
 				if (pid.destPage > maxDestPage)
 					maxDestPage = pid.destPage;
-				if (docPageNo < totPages)
+				if (docPageNo < toPage)
 				{
 					// fold-out back page (3rd page) is in the same dest. page position as 1st page
 					JPDIPageImpoData pid3 = (JPDIPageImpoData)pid1.clone();
@@ -252,7 +264,7 @@ private void applyFormat(TreeSet<Integer>foldOutList) throws CloneNotSupportedEx
 					docPageNo++;
 					if (pid3.destPage > maxDestPage)
 						maxDestPage = pid3.destPage;
-					if (docPageNo < totPages)
+					if (docPageNo < toPage)
 					{
 						// back page of base leaf (4th page) is in the same dest. page position as 2nd page
 						JPDIPageImpoData pid4 = (JPDIPageImpoData)pid.clone();
@@ -311,9 +323,10 @@ private void applyFormat(TreeSet<Integer>foldOutList) throws CloneNotSupportedEx
 			docPageNo++;
 		}
 		// set actual number of signature sheets
-		sheetsPerSign[currSignNo] = ((maxDestPage + 2) & 0xFFFE) / 2;
+		sheetsPerSign.set(currSignNo, ((maxDestPage + 2) & 0xFFFE) / 2 );
 		currSignNo++;
 	}
+	return currSignNo;
 }
 
 /******************
@@ -322,7 +335,7 @@ private void applyFormat(TreeSet<Integer>foldOutList) throws CloneNotSupportedEx
 
 Sets arrays up for application of imposition. */
 
-private void formatSetup(TreeSet<Integer>foldOutList)
+private void formatSetup(int fromPage, int toPage, TreeSet<Integer>foldOutList)
 {
 	int		numOfCols, numOfRows;
 
@@ -331,13 +344,13 @@ private void formatSetup(TreeSet<Integer>foldOutList)
 	numOfRows = numOfRows();
 	// compute some helper values
 	int	pagesPerSheet	= numOfCols * numOfRows * 2;
-	int	numOfSheetPages	= totPages;
+	int	numOfSheetPages	= toPage - fromPage;
 	// if booklet, exclude fold-out pages from pages usable for sheets
 	if (format == Format.booklet)
 		for (Integer foldOut : foldOutList)
-			if (foldOut < totPages)
+			if (foldOut >= fromPage && foldOut < toPage)
 			{
-				if (foldOut < totPages-1)	// if fold-out is not the last page
+				if (foldOut < toPage-1)		// if fold-out is not the last page
 					numOfSheetPages -= 2;	//	it takes 2 pages away from reckon
 				else						// if it the last page
 					numOfSheetPages -= 1;	//	it takes away only itself
@@ -351,11 +364,8 @@ private void formatSetup(TreeSet<Integer>foldOutList)
 	int	extraSheets		= numOfSheets - (numOfSigns * minSheetsPerSign);
 	// determine the number of sheets for each signature, assigning to each signature
 	// at least minSheetsPerSign + 1 for the first extraSheets signatures
-	sheetsPerSign		= new int[numOfSigns];
-	pageImpoData		= new ArrayList<ArrayList<JPDIPageImpoData>>();
-	// max number of pages per signature
 	for (int i = 0; i < numOfSigns; i++)
-		sheetsPerSign[i]	= minSheetsPerSign + (i >= extraSheets ? 0 : 1);
+		sheetsPerSign.add(minSheetsPerSign + (i >= extraSheets ? 0 : 1) );
 }
 
 /******************
@@ -371,9 +381,9 @@ public int	numOfSourcePagesPerSignature(int signNo)
 
 public int numOfDestPagesPerSignature(int signNo)
 {
-	if (signNo < 0 || signNo > sheetsPerSign.length - 1)
+	if (signNo < 0 || signNo > sheetsPerSign.size() - 1)
 		return 0;
-	return sheetsPerSign[signNo] * 2;
+	return sheetsPerSign.get(signNo) * 2;
 }
 
 /******************
