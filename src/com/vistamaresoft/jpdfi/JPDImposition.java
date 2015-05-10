@@ -242,9 +242,17 @@ private int applyFormat(int currSignNo, int fromPage, int toPage, TreeSet<Intege
 				// (unless we are dealing with a double fold-out)
 				if (nextPageOffset == -1 && hasSingleOpposite)
 				{
-					signImpoData.get(pid1.destPage).destPage	= OUT_OF_SEQUENCE_PAGE;
-					signImpoData.get(pid1.destPage).row			= docPageNo - 1;	// glue to pid1
-					signImpoData.get(pid1.destPage-1).destPage	= OUT_OF_SEQUENCE_PAGE;
+					for (int i = 0; i < signImpoData.size()-2; i++)
+					{
+						JPDIPageImpoData oppPid = signImpoData.get(i);
+						if (oppPid.destPage == pid1.destPage && oppPid.col == pid1.col)
+						{
+							oppPid.destPage					= OUT_OF_SEQUENCE_PAGE;
+							oppPid.row						= docPageNo - 1;		// glue to pid1
+							signImpoData.get(i-1).destPage	= OUT_OF_SEQUENCE_PAGE;
+							break;
+						}
+					}
 				}
 //				currPageNo++;		// NO: fold-out pages do not count for imposition
 				docPageNo++;
