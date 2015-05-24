@@ -1,6 +1,6 @@
 ## jPDFImposition
 
-A Java command-line application to apply an imposition to a PDF document.
+A Java command-line application to apply an imposition to one or several PDF documents.
 
 It currently supports two types of impositions:
 - **booklet**: groups of sheets folded in the middle; the number of sheets per group can be configured.
