@@ -117,12 +117,22 @@ Returns:	true = success | false failure */
 
 public boolean merge(int destPageIdx, PDPage srcPage)
 {
-	HashMap<COSName, COSName>	renameList	= new HashMap<COSName, COSName>();
-
-	if (destPageIdx < 0 || destPageIdx > pageMap.length)
+	HashMap<COSName, COSName>	renameList	= merge(destPageIdx, srcPage.getResources());
+	if (renameList == null)
 		return false;
+	// update in the source page contents all the COSName which need to be changed
+	if (renameList.size() > 0)
+		renameInPage(srcPage, renameList);
+	return true;
+}
 
-	COSDictionary					srcResDict	= srcPage.getResources().cosGetDict();
+public HashMap<COSName, COSName> merge(int destPageIdx, PDResources srcRes)
+{
+	if (destPageIdx < 0 || destPageIdx > pageMap.length)
+		return null;
+
+	HashMap<COSName, COSName>		renameList	= new HashMap<COSName, COSName>();
+	COSDictionary					srcResDict	= srcRes.cosGetDict();
 	@SuppressWarnings("unchecked")
 	Iterator<COSDictionary.Entry>	iter		= srcResDict.entryIterator();
 	// iterate on all the source resource entries (sub-tables)
@@ -239,11 +249,8 @@ public boolean merge(int destPageIdx, PDPage srcPage)
 			}
 		}
 	}
-	// update in the source page contents all the COSName which need to be changed
-	if (renameList.size() > 0)
-		renameInPage(srcPage, renameList);
 
-	return true;
+	return renameList;
 }
 
 /******************

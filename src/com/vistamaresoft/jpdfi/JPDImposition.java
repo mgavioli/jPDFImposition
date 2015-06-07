@@ -59,12 +59,13 @@ private static final double	FOLDOUT_XOFFSET			= (7*MM2PDF);	// how much to shift
 
 private class JPDIPageImpoData implements Cloneable
 {
-	int	destPage;		// in which page of the signature the page shall end up (0-based)
-	int	row;			// in which row of that page (0-based)
-	int	col;			// in which column of that page (0-based)
-	int	rotation;		// with which rotation (in degrees)
-	double xOffset;		// the horizontal offset (in PDF units)
-	double yOffset;		// the vertical offset (in PDF units)
+	int		destPage;	// in which page of the signature the page shall end up (0-based)
+	int		row;		// in which row of that page (0-based)
+	int		col;		// in which column of that page (0-based)
+	int		rotation;	// with which rotation (in degrees)
+	double	xOffset;	// the horizontal offset (in PDF units)
+	double	yOffset;	// the vertical offset (in PDF units)
+	int		glueTo;		// the page to glue this page to, if any (0-based); NO_PAGE = no glue to
 
 	@Override
 	protected Object clone() throws CloneNotSupportedException
@@ -190,8 +191,9 @@ private int applyFormat(int currSignNo, int fromPage, int toPage, TreeSet<Intege
 		pageImpoData.add(signImpoData);
 		for (int currPageNo = 0; docPageNo < toPage && currPageNo < numOfSrcPages; currPageNo++)
 		{
-			JPDIPageImpoData pid = new JPDIPageImpoData();
-			pid.xOffset = pid.yOffset = 0;
+			JPDIPageImpoData	pid	= new JPDIPageImpoData();
+			pid.glueTo				= NO_PAGE;
+			pid.xOffset				= pid.yOffset = 0;
 			signImpoData.add(pid);
 
 			// BOOKLET FOLD-OUT SPECIAL CASE
@@ -214,9 +216,6 @@ private int applyFormat(int currSignNo, int fromPage, int toPage, TreeSet<Intege
 					// 1st page is first of a new dest. page
 					pid1.col		= 0;				// first column
 					pid1.destPage	= (++maxDestPage);	// of a new page
-					// TODO : .row contains the glue-to page; it would be useful
-					// to keep this info somewhere; possibly it is worth adding
-					// a JPDIPageImpoData field for this, instead of recycling .row
 					pid1.row		= 0;				// booklet only has 1 row
 					hasSingleOpposite	= false;		// opposite is not a single page
 					// 2nd page is second of the new dest. page
@@ -248,7 +247,8 @@ private int applyFormat(int currSignNo, int fromPage, int toPage, TreeSet<Intege
 						if (oppPid.destPage == pid1.destPage && oppPid.col == pid1.col)
 						{
 							oppPid.destPage					= OUT_OF_SEQUENCE_PAGE;
-							oppPid.row						= docPageNo - 1;		// glue to pid1
+//							oppPid.row						= docPageNo - 1;		// glue to pid1
+							oppPid.glueTo					= docPageNo - 1;		// glue to pid1
 							signImpoData.get(i-1).destPage	= OUT_OF_SEQUENCE_PAGE;
 							break;
 						}
@@ -263,6 +263,7 @@ private int applyFormat(int currSignNo, int fromPage, int toPage, TreeSet<Intege
 					// fold-out back page (3rd page) is in the same dest. page position as 1st page
 					JPDIPageImpoData pid3 = (JPDIPageImpoData)pid1.clone();
 					signImpoData.add(pid3);
+					pid3.glueTo		= NO_PAGE;
 					pid3.destPage	= pid1.destPage + nextPageOffset;
 					// and on the other side of 2nd page: set symmetrical x offset
 					pid3.xOffset	= -pid.xOffset;
@@ -275,6 +276,7 @@ private int applyFormat(int currSignNo, int fromPage, int toPage, TreeSet<Intege
 						// back page of base leaf (4th page) is in the same dest. page position as 2nd page
 						JPDIPageImpoData pid4 = (JPDIPageImpoData)pid.clone();
 						signImpoData.add(pid4);
+						pid4.glueTo		= NO_PAGE;
 						pid4.destPage	= pid.destPage + nextPageOffset;
 						// and on the other side of 1st page: set symmetrical x offset
 						pid4.xOffset	= -pid1.xOffset;
@@ -319,8 +321,8 @@ private int applyFormat(int currSignNo, int fromPage, int toPage, TreeSet<Intege
 					{
 						// if this is the back page (destination page is odd), note page to glue to
 						if ((pid.destPage & 1) == 1)
-							pid.row = docPageNo - signImpoData.size() + i + 1;
-						pid.destPage = OUT_OF_SEQUENCE_PAGE;
+							pid.glueTo	= docPageNo - signImpoData.size() + i + 1;
+						pid.destPage	= OUT_OF_SEQUENCE_PAGE;
 						break;
 					}
 
@@ -435,6 +437,12 @@ public int pageDestRotation(int srcPageNo, int signNo)
 	if (srcPageNo < 0 || srcPageNo > pageImpoData.get(signNo).size()-1)
 		srcPageNo = 0;
 	return pageImpoData.get(signNo).get(srcPageNo).rotation;
+}
+public int pageDestGlueTo(int srcPageNo, int signNo)
+{
+	if (srcPageNo < 0 || srcPageNo > pageImpoData.get(signNo).size()-1)
+		srcPageNo = 0;
+	return pageImpoData.get(signNo).get(srcPageNo).glueTo;
 }
 
 /******************

@@ -433,10 +433,11 @@ public boolean impose()
 			if (destPageNo == JPDImposition.NO_PAGE)
 				continue;
 
+			int	glueTo	= impo.pageDestGlueTo(currSignPageNo, currSignNo);
 			// OUT-OF-SEQUENCE PAGE SPECIAL CASE (typically for page opposite to fold-out)
 			if (destPageNo == JPDImposition.OUT_OF_SEQUENCE_PAGE)
 			{
-				createSinglePage(currSrcPage, impo.pageDestRow(currSignPageNo, currSignNo), singlePages, resMap);
+				createSinglePage(currSrcPage, glueTo, singlePages, resMap);
 				currSrcPage = srcStatus.nextPage();
 				continue;
 			}
@@ -458,6 +459,13 @@ public boolean impose()
 				(float)(scaleX*cosRot), (float)(scaleX*sinRot),
 				-(float)(scaleY*sinRot), (float)(scaleY*cosRot),
 				(float)offsetX, (float)offsetY);
+			// add glue-to page number, if required, merging its font resource
+			if (glueTo != JPDImposition.NO_PAGE)
+			{
+				addGlueToPageNo(destCreator[destPageNo], srcBox, glueTo, resMap);
+				PDResources res = destCreator[destPageNo].getResourcesProvider().getResources();
+				merger.merge(destPageNo, res);
+			}
 			// copy source page contents
 			destCreator[destPageNo].copy(currSrcPage.getContentStream());
 
@@ -688,8 +696,38 @@ protected boolean createSinglePage(PDPage currSrcPage, int gluePageNo, ArrayList
 	destPage.setMediaBox(box);
 
 	// add side page no., if supplied
-	if (gluePageNo > 0)
+	if (gluePageNo != JPDImposition.NO_PAGE)
+		addGlueToPageNo(destCreator, box, gluePageNo, resMap);
+
+	destCreator.copy(currSrcPage.getContentStream());
+	destCreator.close();
+	// add content to dest. page
+	COSStream pageStream = destContent.createStream();
+	pageStream.addFilter(COSName.constant("FlateDecode"));
+	destPage.cosAddContents(pageStream);
+	// add resources, if any
+	if (currSrcPage.getResources() != null)
 	{
+		COSObject	cosResourcesCopy	= currSrcPage.getResources().cosGetObject().copyDeep(resMap);
+		PDResources	pdResourcesCopy		= (PDResources) PDResources.META.createFromCos(cosResourcesCopy);
+		if (gluePageNo != JPDImposition.NO_PAGE)	// be sure the glue-to font resource is included
+			pdResourcesCopy.addFontResource(impoFontName, impoFont);
+		destPage.setResources(pdResourcesCopy);
+	}
+	singlePages.add(destPage);
+
+	return true;
+}
+
+/******************
+	Add glue-to page number
+*******************
+
+Adds to the page side the indication of the page number to glue this page to. */
+
+protected void addGlueToPageNo(CSCreator destCreator, CDSRectangle box, int gluePageNo,
+	HashMap<COSIndirectObject, COSCompositeObject> resMap)
+{
 		if (impoFont == null)
 		{
 			impoFont		= PDFontType1.createNew(PDFontType1.FONT_Courier);
@@ -703,28 +741,11 @@ protected boolean createSinglePage(PDPage currSrcPage, int gluePageNo, ArrayList
 		// if gluing to odd page, place at left margin; if even, place at right margin
 		destCreator.textSetTransform(0, 1, -1, 0,				// 90° counter-clockwise rotation
 				(gluePageNo & 1) == 1 ? 12 : box.getWidth()-6,	// X translation
+//				(gluePageNo & 1) == 1 ? 120 : box.getWidth()-6,	// X translation
 				box.getHeight()/2);								// Y translation
 		// convert physical page no. to printed page no. and then from 0-based to 1-based
 		destCreator.textShow("p. " + (gluePageNo - srcStatus.pageNoOffset(gluePageNo) + 1));
 		destCreator.flush();
-	}
-
-	destCreator.copy(currSrcPage.getContentStream());
-	destCreator.close();
-	// add content to dest. page
-	COSStream pageStream = destContent.createStream();
-	pageStream.addFilter(COSName.constant("FlateDecode"));
-	destPage.cosAddContents(pageStream);
-	// add resources, if any
-	if (currSrcPage.getResources() != null)
-	{
-		COSObject	cosResourcesCopy	= currSrcPage.getResources().cosGetObject().copyDeep(resMap);
-		PDResources	pdResourcesCopy		= (PDResources) PDResources.META.createFromCos(cosResourcesCopy);
-		destPage.setResources(pdResourcesCopy);
-	}
-	singlePages.add(destPage);
-
-	return true;
 }
 
 /******************
