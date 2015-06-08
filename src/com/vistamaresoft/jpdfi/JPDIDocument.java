@@ -54,6 +54,9 @@ import de.intarsys.pdf.font.PDFont;
 import de.intarsys.pdf.font.PDFontType1;
 import de.intarsys.pdf.parser.COSLoadException;
 import de.intarsys.pdf.pd.PDDocument;
+import de.intarsys.pdf.pd.PDExplicitDestination;
+import de.intarsys.pdf.pd.PDOutline;
+import de.intarsys.pdf.pd.PDOutlineItem;
 import de.intarsys.pdf.pd.PDPage;
 import de.intarsys.pdf.pd.PDPageTree;
 import de.intarsys.pdf.pd.PDResources;
@@ -296,6 +299,7 @@ if (!dontOpenAllDocs)
 // FIELDS
 
 private PDDocument				dstDoc;
+private HashMap<Integer,String>	bookmarks;
 private TreeSet<Integer>		foldOutList;
 private JPDImposition.Format	format;
 private int						formatSubParam;
@@ -330,12 +334,14 @@ public JPDIDocument(String fileName)
 private void init()
 {
 	dstDoc				= null;
+	if (bookmarks == null)
+		bookmarks		= new HashMap<Integer, String>();
 	if (foldOutList == null)
 		foldOutList		= new TreeSet<Integer>();
 	else
 		foldOutList.clear();
 	if (signBreakList == null)
-		signBreakList		= new TreeSet<Integer>();
+		signBreakList	= new TreeSet<Integer>();
 	else
 		signBreakList.clear();
 	outputFileName		= null;
@@ -543,9 +549,13 @@ public boolean concatenate(HashMap<COSIndirectObject, COSCompositeObject> resMap
 		if (!createDestDocument(srcDoc))
 			return false;
 	if (resMap == null)
+	{
 		resMap = new HashMap<COSIndirectObject, COSCompositeObject>();
+		initBookmarks();
+	}
 
-	// for each signature
+	// for each source page
+	int		pageNo	= 0;
 	while (currSrcPage != null)
 	{
 		PDPage			destPage	= (PDPage) PDPage.META.createNew();
@@ -566,15 +576,76 @@ public boolean concatenate(HashMap<COSIndirectObject, COSCompositeObject> resMap
 			PDResources	pdResourcesCopy		= (PDResources) PDResources.META.createFromCos(cosResourcesCopy);
 			destPage.setResources(pdResourcesCopy);
 		}
-		// add page to doc and release objects no longer needed
+		// add page to doc and the page bookmark to the outline, if any
 		dstDoc.addPageNode(destPage);
+		addBookmark(pageNo, destPage);
+
+		// release objects no longer needed
 		destCreator	= null;		// a bit of paranoia!
 		destContent	= null;
 		destPage	= null;
 		currSrcPage = srcStatus.nextPage();
+		pageNo++;
 	}
 	return true;
 }
+
+/******************
+	INIT BOOKMARKS
+*******************
+Inits the document outline, if there are bookmarks.
+
+Parameters:	none.
+Returns:	none. */
+
+public void initBookmarks()
+{
+	if (bookmarks.size() < 1)			// no bookmarks: do nothing
+		return;
+
+	// The outline object itself
+	PDOutline outline = (PDOutline) PDOutline.META.createNew();
+	dstDoc.setOutline(outline);
+// No top level item
+//	// The outline tree root
+//	PDOutlineItem root = (PDOutlineItem) PDOutlineItem.META.createNew();
+//	root.setTitle("Contents");
+//	outline.addItem(root);
+}
+
+/******************
+	ADD BOOKMARK
+*******************
+Adds the bookmark for the given page, if it exists.
+
+Parameters:	none.
+Returns:	none. */
+
+public void addBookmark(int pageNo, PDPage page)
+{
+	String	title	= bookmarks.get(pageNo);	// look for the title at that page position
+	if (title == null)							// if none, do nothing
+		return;
+
+	// The destination
+	PDExplicitDestination	destination	= (PDExplicitDestination) PDExplicitDestination.META.createNew();
+	destination.setDisplayMode(PDExplicitDestination.CN_DISPLAY_MODE_Fit);
+	destination.setPage(page);
+	// The bookmark
+	PDOutlineItem			bookmark	= (PDOutlineItem) PDOutlineItem.META.createNew();
+	bookmark.setTitle(title); //$NON-NLS-1$
+	bookmark.setDestination(destination);
+// No top level item
+//	dstDoc.getOutline().getFirst().addItem(bookmark);
+	dstDoc.getOutline().addItem(bookmark);
+}
+
+/*
+For /PageLabels:
+
+*) PDF32000_2008.pdf, sect. 12.4.2, p. 374
+*) http://www.w3.org/TR/WCAG20-TECHS/PDF17.html
+*/
 
 /******************
 	Save the destination document
@@ -898,10 +969,19 @@ public boolean readParamFile(String fileName)
 						doc.setToPage(intVal);
 					break;
 				}
-				case "output":
+				case "backoffsetx":
+					pageOffsetX[BACK_PAGE] = getDoubleParam(val, elementName, 0.0) * JPDImposition.MM2PDF;
+					break;
+				case "backoffsety":
+					pageOffsetY[BACK_PAGE] = getDoubleParam(val, elementName, 0.0) * JPDImposition.MM2PDF;
+					break;
+				case "bookmark":
 				{
-					File file = new File(val);
-					outputFileName = file.isAbsolute() ? val : filePath + File.separator + val;
+					intVal			= getIntParam(val, elementName, -1);
+					reader.next();
+					String	title	= reader.getText();
+					if (intVal >= 0 && title.length() > 0)
+						bookmarks.put(intVal + pageNoOffset - 1, title);
 					break;
 				}
 				case "format":
@@ -913,16 +993,6 @@ public boolean readParamFile(String fileName)
 								formatSubParam = -1;
 					break;
 				}
-				case "sheetspersign":
-					maxSheetsPerSign = getIntParam(val, elementName, 
-							JPDImposition.DEFAULT_SHEETS_PER_SIGN);
-					break;
-				case "backoffsetx":
-					pageOffsetX[BACK_PAGE] = getDoubleParam(val, elementName, 0.0) * JPDImposition.MM2PDF;
-					break;
-				case "backoffsety":
-					pageOffsetY[BACK_PAGE] = getDoubleParam(val, elementName, 0.0) * JPDImposition.MM2PDF;
-					break;
 				case "frontoffsetx":
 					pageOffsetX[FRONT_PAGE] = getDoubleParam(val, elementName, 0.0) * JPDImposition.MM2PDF;
 					break;
@@ -946,6 +1016,16 @@ public boolean readParamFile(String fileName)
 					break;
 				case "pagesizevert":
 					pageSizeY = getDoubleParam(val, elementName, 0.0) * JPDImposition.MM2PDF;
+					break;
+				case "output":
+				{
+					File file = new File(val);
+					outputFileName = file.isAbsolute() ? val : filePath + File.separator + val;
+					break;
+				}
+				case "sheetspersign":
+					maxSheetsPerSign = getIntParam(val, elementName, 
+							JPDImposition.DEFAULT_SHEETS_PER_SIGN);
 					break;
 				default:
 					System.err.println("Unknown parameter '" + elementName + "' in parameter file " + fileName);
