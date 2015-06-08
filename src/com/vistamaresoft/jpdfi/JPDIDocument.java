@@ -35,16 +35,17 @@ import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
 
+
 import de.intarsys.pdf.cds.CDSRectangle;
 import de.intarsys.pdf.content.CSContent;
 import de.intarsys.pdf.content.common.CSCreator;
-//import de.intarsys.pdf.cos.COSArray;
+import de.intarsys.pdf.cos.COSArray;
 import de.intarsys.pdf.cos.COSCatalog;
 import de.intarsys.pdf.cos.COSCompositeObject;
 import de.intarsys.pdf.cos.COSDocument;
-//import de.intarsys.pdf.cos.COSDocumentElement;
 import de.intarsys.pdf.cos.COSDictionary;
 import de.intarsys.pdf.cos.COSIndirectObject;
+import de.intarsys.pdf.cos.COSInteger;
 import de.intarsys.pdf.cos.COSName;
 import de.intarsys.pdf.cos.COSNull;
 import de.intarsys.pdf.cos.COSObject;
@@ -552,6 +553,7 @@ public boolean concatenate(HashMap<COSIndirectObject, COSCompositeObject> resMap
 	{
 		resMap = new HashMap<COSIndirectObject, COSCompositeObject>();
 		initBookmarks();
+		createPageLabels(dstDoc.cosGetDoc());
 	}
 
 	// for each source page
@@ -646,6 +648,47 @@ For /PageLabels:
 *) PDF32000_2008.pdf, sect. 12.4.2, p. 374
 *) http://www.w3.org/TR/WCAG20-TECHS/PDF17.html
 */
+
+/******************
+	Create the page labels
+*******************/
+
+protected void createPageLabels(COSDocument doc)
+{
+	int		initPageNoOffset = srcStatus.pageNoOffset(0);
+	// something to change about page numbering?
+	if (initPageNoOffset == 0)
+		return;
+
+	// create the array to hold the number tree entries
+	COSArray		numsArray	= COSArray.create(4);
+	// if some initial unnumbered pages, add an entry for page 0 without any numbering
+	// (there MUST be an entry for page 0!)
+	if (initPageNoOffset > 0)
+	{
+		COSInteger		number	= COSInteger.create(0);
+		COSDictionary	value	= COSDictionary.create();
+		numsArray.add(number);
+		numsArray.add(value);
+	}
+	// create a number tree entry with "S"tyle as "D"ecimal numerals
+	// starting at page 0 if numbering starts above 1 (initPageNoOffset < 0)
+	// and starting at initPageNoOffset if numbering starts after some unnumbered pages
+	COSInteger		number		= COSInteger.create(initPageNoOffset > 0 ? initPageNoOffset : 0);
+	COSDictionary	value		= COSDictionary.create(2);
+	value.put(COSName.create("S"), COSName.create("D"));
+	// numbering will start at 1 with initial unnumbered pages (initPageNoOffset > 0)
+	// and with the number of missing initial page, if any (initPageNoOffset < 0)
+	value.put(COSName.create("St"), COSInteger.create(initPageNoOffset < 0 ? -initPageNoOffset : 1));
+	numsArray.add(number);
+	numsArray.add(value);
+
+	// create a single-entry dictionary for the << /Nums numArray >> association
+	// and add it to the doc catalogue
+	COSDictionary	pageLabels	= COSDictionary.create(1);
+	pageLabels.put(COSName.create("Nums"), numsArray);
+	doc.getCatalog().cosSetField(COSCatalog.DK_PageLabels, pageLabels);
+}
 
 /******************
 	Save the destination document
