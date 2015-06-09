@@ -655,16 +655,16 @@ For /PageLabels:
 
 protected void createPageLabels(COSDocument doc)
 {
-	int		initPageNoOffset = srcStatus.pageNoOffset(0);
-	// something to change about page numbering?
-	if (initPageNoOffset == 0)
+	int		pageNoOffset = srcStatus.pageNoOffset(0);
+	// if nothing to change about page numbering or no bookmarks, do nothing
+	if (pageNoOffset == 0 || bookmarks.isEmpty())
 		return;
 
 	// create the array to hold the number tree entries
 	COSArray		numsArray	= COSArray.create(4);
 	// if some initial unnumbered pages, add an entry for page 0 without any numbering
 	// (there MUST be an entry for page 0!)
-	if (initPageNoOffset > 0)
+	if (pageNoOffset > 0)
 	{
 		COSInteger		number	= COSInteger.create(0);
 		COSDictionary	value	= COSDictionary.create();
@@ -674,12 +674,12 @@ protected void createPageLabels(COSDocument doc)
 	// create a number tree entry with "S"tyle as "D"ecimal numerals
 	// starting at page 0 if numbering starts above 1 (initPageNoOffset < 0)
 	// and starting at initPageNoOffset if numbering starts after some unnumbered pages
-	COSInteger		number		= COSInteger.create(initPageNoOffset > 0 ? initPageNoOffset : 0);
+	COSInteger		number		= COSInteger.create(pageNoOffset > 0 ? pageNoOffset : 0);
 	COSDictionary	value		= COSDictionary.create(2);
 	value.put(COSName.create("S"), COSName.create("D"));
 	// numbering will start at 1 with initial unnumbered pages (initPageNoOffset > 0)
 	// and with the number of missing initial page, if any (initPageNoOffset < 0)
-	value.put(COSName.create("St"), COSInteger.create(initPageNoOffset < 0 ? -initPageNoOffset : 1));
+	value.put(COSName.create("St"), COSInteger.create(pageNoOffset < 0 ? -pageNoOffset : 1));
 	numsArray.add(number);
 	numsArray.add(value);
 
